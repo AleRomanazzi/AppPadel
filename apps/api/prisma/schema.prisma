@@ -1,0 +1,147 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Player {
+  id             Int                @id @default(autoincrement())
+  nickname       String             @unique
+  active         Boolean            @default(true)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  pointsEntries  RankingPointEntry[]
+  registrations  DateRegistration[]
+  blacklistEntry BlacklistedPlayer?
+}
+
+model BlacklistedPlayer {
+  id        Int      @id @default(autoincrement())
+  playerId  Int      @unique
+  createdAt DateTime @default(now())
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+}
+
+model PartnerHistory {
+  id        Int      @id @default(autoincrement())
+  playerAId Int
+  playerBId Int
+  dateId    Int?
+  createdAt DateTime @default(now())
+
+  @@unique([playerAId, playerBId])
+}
+
+model TournamentDate {
+  id            Int                @id @default(autoincrement())
+  name          String
+  eventDate     DateTime
+  status        DateStatus         @default(DRAFT)
+  createdAt     DateTime           @default(now())
+  registrations DateRegistration[]
+  draws         DateDraw[]
+  zones         Zone[]
+  matches       ZoneMatch[]
+  seeds         DateSeed[]
+  bracketMatches BracketMatch[]
+}
+
+model DateRegistration {
+  id       Int @id @default(autoincrement())
+  dateId   Int
+  playerId Int
+
+  date   TournamentDate @relation(fields: [dateId], references: [id], onDelete: Cascade)
+  player Player         @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([dateId, playerId])
+}
+
+model DateDraw {
+  id        Int        @id @default(autoincrement())
+  dateId    Int
+  status    DrawStatus @default(DRAFT)
+  createdAt DateTime   @default(now())
+  date      TournamentDate @relation(fields: [dateId], references: [id], onDelete: Cascade)
+  pairs     DrawPair[]
+}
+
+model DrawPair {
+  id      Int @id @default(autoincrement())
+  drawId  Int
+  player1 Int
+  player2 Int
+  draw    DateDraw @relation(fields: [drawId], references: [id], onDelete: Cascade)
+}
+
+model DateSeed {
+  id       Int @id @default(autoincrement())
+  dateId   Int
+  playerId Int
+
+  date TournamentDate @relation(fields: [dateId], references: [id], onDelete: Cascade)
+
+  @@unique([dateId, playerId])
+}
+
+model Zone {
+  id      Int @id @default(autoincrement())
+  dateId  Int
+  name    String
+  size    Int
+  date    TournamentDate @relation(fields: [dateId], references: [id], onDelete: Cascade)
+}
+
+model ZoneMatch {
+  id            Int @id @default(autoincrement())
+  dateId        Int
+  zoneName      String
+  pairAPlayer1  Int
+  pairAPlayer2  Int
+  pairBPlayer1  Int
+  pairBPlayer2  Int
+  score         String?
+  winnerPairKey String?
+  date          TournamentDate @relation(fields: [dateId], references: [id], onDelete: Cascade)
+}
+
+model RankingPointEntry {
+  id        Int      @id @default(autoincrement())
+  playerId  Int
+  points    Int
+  reason    String
+  manual    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+}
+
+model BracketMatch {
+  id            Int      @id @default(autoincrement())
+  dateId        Int
+  round         Int
+  position      Int
+  pairAPlayer1  Int?
+  pairAPlayer2  Int?
+  pairBPlayer1  Int?
+  pairBPlayer2  Int?
+  score         String?
+  winnerPairKey String?
+  createdAt     DateTime @default(now())
+  date          TournamentDate @relation(fields: [dateId], references: [id], onDelete: Cascade)
+
+  @@unique([dateId, round, position])
+}
+
+enum DateStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+enum DrawStatus {
+  DRAFT
+  CONFIRMED
+}

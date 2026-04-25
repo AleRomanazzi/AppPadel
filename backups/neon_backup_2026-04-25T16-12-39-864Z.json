@@ -1,0 +1,564 @@
+{
+  "exportedAt": "2026-04-25T16:12:39.869Z",
+  "players": [
+    {
+      "id": 1,
+      "nickname": "Luis",
+      "active": true,
+      "createdAt": "2026-04-25T15:07:38.504Z",
+      "updatedAt": "2026-04-25T15:07:38.504Z"
+    },
+    {
+      "id": 2,
+      "nickname": "Nico",
+      "active": true,
+      "createdAt": "2026-04-25T15:07:42.719Z",
+      "updatedAt": "2026-04-25T15:07:42.719Z"
+    },
+    {
+      "id": 3,
+      "nickname": "Leyu",
+      "active": true,
+      "createdAt": "2026-04-25T15:07:45.478Z",
+      "updatedAt": "2026-04-25T15:07:45.478Z"
+    },
+    {
+      "id": 4,
+      "nickname": "Enzo",
+      "active": true,
+      "createdAt": "2026-04-25T15:07:49.212Z",
+      "updatedAt": "2026-04-25T15:07:49.212Z"
+    },
+    {
+      "id": 5,
+      "nickname": "Perkins",
+      "active": true,
+      "createdAt": "2026-04-25T15:07:54.786Z",
+      "updatedAt": "2026-04-25T15:07:54.786Z"
+    },
+    {
+      "id": 6,
+      "nickname": "Franco M",
+      "active": true,
+      "createdAt": "2026-04-25T15:07:57.517Z",
+      "updatedAt": "2026-04-25T15:07:57.517Z"
+    },
+    {
+      "id": 7,
+      "nickname": "Tucu",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:02.922Z",
+      "updatedAt": "2026-04-25T15:08:02.922Z"
+    },
+    {
+      "id": 8,
+      "nickname": "Mazzu",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:07.708Z",
+      "updatedAt": "2026-04-25T15:08:07.708Z"
+    },
+    {
+      "id": 9,
+      "nickname": "Ivan",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:11.204Z",
+      "updatedAt": "2026-04-25T15:08:11.204Z"
+    },
+    {
+      "id": 10,
+      "nickname": "Gaby",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:13.867Z",
+      "updatedAt": "2026-04-25T15:08:13.867Z"
+    },
+    {
+      "id": 11,
+      "nickname": "Chispa",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:16.042Z",
+      "updatedAt": "2026-04-25T15:08:16.042Z"
+    },
+    {
+      "id": 12,
+      "nickname": "Fito R",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:19.753Z",
+      "updatedAt": "2026-04-25T15:08:19.753Z"
+    },
+    {
+      "id": 13,
+      "nickname": "Zurdo",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:23.313Z",
+      "updatedAt": "2026-04-25T15:08:23.313Z"
+    },
+    {
+      "id": 14,
+      "nickname": "Lucas G",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:26.979Z",
+      "updatedAt": "2026-04-25T15:08:26.979Z"
+    },
+    {
+      "id": 15,
+      "nickname": "Negro A",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:30.476Z",
+      "updatedAt": "2026-04-25T15:08:30.476Z"
+    },
+    {
+      "id": 16,
+      "nickname": "Raucha",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:33.870Z",
+      "updatedAt": "2026-04-25T15:08:33.870Z"
+    },
+    {
+      "id": 17,
+      "nickname": "Javi M",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:37.593Z",
+      "updatedAt": "2026-04-25T15:08:37.593Z"
+    },
+    {
+      "id": 18,
+      "nickname": "Chucho",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:42.308Z",
+      "updatedAt": "2026-04-25T15:08:42.308Z"
+    },
+    {
+      "id": 19,
+      "nickname": "Humi",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:45.605Z",
+      "updatedAt": "2026-04-25T15:08:45.605Z"
+    },
+    {
+      "id": 20,
+      "nickname": "Messi",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:48.437Z",
+      "updatedAt": "2026-04-25T15:08:48.437Z"
+    },
+    {
+      "id": 21,
+      "nickname": "Efra",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:50.981Z",
+      "updatedAt": "2026-04-25T15:08:50.981Z"
+    },
+    {
+      "id": 22,
+      "nickname": "Walter",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:57.367Z",
+      "updatedAt": "2026-04-25T15:08:57.367Z"
+    },
+    {
+      "id": 23,
+      "nickname": "Jais",
+      "active": true,
+      "createdAt": "2026-04-25T15:08:59.296Z",
+      "updatedAt": "2026-04-25T15:08:59.296Z"
+    },
+    {
+      "id": 24,
+      "nickname": "Tolito",
+      "active": true,
+      "createdAt": "2026-04-25T15:09:03.740Z",
+      "updatedAt": "2026-04-25T15:09:03.740Z"
+    },
+    {
+      "id": 25,
+      "nickname": "Pablo",
+      "active": true,
+      "createdAt": "2026-04-25T15:09:06.734Z",
+      "updatedAt": "2026-04-25T15:09:06.734Z"
+    },
+    {
+      "id": 26,
+      "nickname": "Diego P",
+      "active": true,
+      "createdAt": "2026-04-25T15:09:10.002Z",
+      "updatedAt": "2026-04-25T15:09:10.002Z"
+    },
+    {
+      "id": 27,
+      "nickname": "Pipita",
+      "active": true,
+      "createdAt": "2026-04-25T15:09:13.259Z",
+      "updatedAt": "2026-04-25T15:09:13.259Z"
+    },
+    {
+      "id": 28,
+      "nickname": "Ale Roma",
+      "active": true,
+      "createdAt": "2026-04-25T15:09:17.314Z",
+      "updatedAt": "2026-04-25T15:09:17.314Z"
+    },
+    {
+      "id": 29,
+      "nickname": "German",
+      "active": true,
+      "createdAt": "2026-04-25T15:09:20.635Z",
+      "updatedAt": "2026-04-25T15:09:20.635Z"
+    }
+  ],
+  "blacklistedPlayers": [
+    {
+      "id": 37,
+      "playerId": 4,
+      "createdAt": "2026-04-25T15:20:58.767Z"
+    },
+    {
+      "id": 38,
+      "playerId": 19,
+      "createdAt": "2026-04-25T15:20:58.767Z"
+    },
+    {
+      "id": 39,
+      "playerId": 5,
+      "createdAt": "2026-04-25T15:20:58.767Z"
+    },
+    {
+      "id": 40,
+      "playerId": 10,
+      "createdAt": "2026-04-25T15:20:58.767Z"
+    },
+    {
+      "id": 41,
+      "playerId": 7,
+      "createdAt": "2026-04-25T15:20:58.767Z"
+    },
+    {
+      "id": 42,
+      "playerId": 24,
+      "createdAt": "2026-04-25T15:20:58.767Z"
+    },
+    {
+      "id": 43,
+      "playerId": 27,
+      "createdAt": "2026-04-25T15:20:58.767Z"
+    }
+  ],
+  "partnerHistory": [
+    {
+      "id": 1,
+      "playerAId": 1,
+      "playerBId": 4,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:55:28.125Z"
+    },
+    {
+      "id": 2,
+      "playerAId": 4,
+      "playerBId": 18,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:55:36.993Z"
+    },
+    {
+      "id": 3,
+      "playerAId": 4,
+      "playerBId": 12,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:55:42.304Z"
+    },
+    {
+      "id": 4,
+      "playerAId": 4,
+      "playerBId": 17,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:55:51.485Z"
+    },
+    {
+      "id": 5,
+      "playerAId": 1,
+      "playerBId": 14,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:56:17.844Z"
+    },
+    {
+      "id": 6,
+      "playerAId": 1,
+      "playerBId": 7,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:56:21.394Z"
+    },
+    {
+      "id": 7,
+      "playerAId": 1,
+      "playerBId": 5,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:56:25.350Z"
+    },
+    {
+      "id": 8,
+      "playerAId": 9,
+      "playerBId": 19,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:56:36.400Z"
+    },
+    {
+      "id": 9,
+      "playerAId": 9,
+      "playerBId": 24,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:56:51.050Z"
+    },
+    {
+      "id": 10,
+      "playerAId": 2,
+      "playerBId": 8,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:56:56.974Z"
+    },
+    {
+      "id": 11,
+      "playerAId": 8,
+      "playerBId": 14,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:57:04.164Z"
+    },
+    {
+      "id": 12,
+      "playerAId": 8,
+      "playerBId": 10,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:57:09.369Z"
+    },
+    {
+      "id": 13,
+      "playerAId": 8,
+      "playerBId": 11,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:57:15.957Z"
+    },
+    {
+      "id": 14,
+      "playerAId": 2,
+      "playerBId": 3,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:57:28.745Z"
+    },
+    {
+      "id": 15,
+      "playerAId": 2,
+      "playerBId": 17,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:57:36.574Z"
+    },
+    {
+      "id": 16,
+      "playerAId": 2,
+      "playerBId": 6,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:57:40.667Z"
+    },
+    {
+      "id": 17,
+      "playerAId": 3,
+      "playerBId": 11,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:57:46.098Z"
+    },
+    {
+      "id": 18,
+      "playerAId": 11,
+      "playerBId": 21,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:57:58.207Z"
+    },
+    {
+      "id": 19,
+      "playerAId": 11,
+      "playerBId": 16,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:58:07.511Z"
+    },
+    {
+      "id": 20,
+      "playerAId": 3,
+      "playerBId": 23,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:58:49.695Z"
+    },
+    {
+      "id": 21,
+      "playerAId": 3,
+      "playerBId": 13,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:59:00.689Z"
+    },
+    {
+      "id": 22,
+      "playerAId": 6,
+      "playerBId": 14,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:59:49.213Z"
+    },
+    {
+      "id": 23,
+      "playerAId": 5,
+      "playerBId": 6,
+      "dateId": null,
+      "createdAt": "2026-04-25T15:59:55.002Z"
+    },
+    {
+      "id": 24,
+      "playerAId": 6,
+      "playerBId": 16,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:00:07.979Z"
+    },
+    {
+      "id": 25,
+      "playerAId": 3,
+      "playerBId": 14,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:01:00.769Z"
+    },
+    {
+      "id": 26,
+      "playerAId": 14,
+      "playerBId": 22,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:01:10.175Z"
+    },
+    {
+      "id": 27,
+      "playerAId": 15,
+      "playerBId": 21,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:02:24.755Z"
+    },
+    {
+      "id": 28,
+      "playerAId": 13,
+      "playerBId": 15,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:02:45.542Z"
+    },
+    {
+      "id": 29,
+      "playerAId": 15,
+      "playerBId": 28,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:02:51.684Z"
+    },
+    {
+      "id": 30,
+      "playerAId": 15,
+      "playerBId": 18,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:02:59.149Z"
+    },
+    {
+      "id": 31,
+      "playerAId": 5,
+      "playerBId": 21,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:03:18.411Z"
+    },
+    {
+      "id": 32,
+      "playerAId": 13,
+      "playerBId": 21,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:03:33.917Z"
+    },
+    {
+      "id": 33,
+      "playerAId": 16,
+      "playerBId": 21,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:03:45.709Z"
+    },
+    {
+      "id": 34,
+      "playerAId": 11,
+      "playerBId": 18,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:04:43.498Z"
+    },
+    {
+      "id": 35,
+      "playerAId": 5,
+      "playerBId": 18,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:05:10.881Z"
+    },
+    {
+      "id": 36,
+      "playerAId": 16,
+      "playerBId": 23,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:06:03.861Z"
+    },
+    {
+      "id": 37,
+      "playerAId": 13,
+      "playerBId": 25,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:06:38.147Z"
+    },
+    {
+      "id": 38,
+      "playerAId": 25,
+      "playerBId": 27,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:06:53.836Z"
+    },
+    {
+      "id": 39,
+      "playerAId": 12,
+      "playerBId": 17,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:07:10.974Z"
+    },
+    {
+      "id": 40,
+      "playerAId": 17,
+      "playerBId": 20,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:07:18.046Z"
+    },
+    {
+      "id": 41,
+      "playerAId": 7,
+      "playerBId": 12,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:07:50.880Z"
+    },
+    {
+      "id": 42,
+      "playerAId": 10,
+      "playerBId": 20,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:08:15.252Z"
+    },
+    {
+      "id": 43,
+      "playerAId": 10,
+      "playerBId": 26,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:08:23.419Z"
+    },
+    {
+      "id": 44,
+      "playerAId": 7,
+      "playerBId": 22,
+      "dateId": null,
+      "createdAt": "2026-04-25T16:08:46.206Z"
+    }
+  ],
+  "tournamentDates": [],
+  "dateRegistrations": [],
+  "dateSeeds": [],
+  "dateDraws": [],
+  "drawPairs": [],
+  "zones": [],
+  "zoneMatches": [],
+  "bracketMatches": [],
+  "rankingPointEntries": []
+}
