@@ -19,11 +19,20 @@ const STAGE_POINTS: Record<Stage, number> = {
 const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const app = express();
-app.use(helmet());
+app.use(
+  helmet({
+    // La API se consume desde otro origen (Vercel); same-origin bloquea el fetch del front.
+    crossOriginResourcePolicy: { policy: "cross-origin" }
+  })
+);
 const corsOrigins = (process.env.CORS_ORIGIN ?? "")
   .split(",")
-  .map((value) => value.trim())
-  .filter(Boolean);
+  .map((value) => value.trim().replace(/\/$/, ""))
+  .filter(Boolean)
+  .flatMap((value) => {
+    if (value.startsWith("http://") || value.startsWith("https://")) return [value];
+    return [`https://${value}`, `http://${value}`];
+  });
 app.use(cors(corsOrigins.length > 0 ? { origin: corsOrigins } : undefined));
 app.use(express.json());
 
