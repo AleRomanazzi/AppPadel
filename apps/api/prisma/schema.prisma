@@ -42,6 +42,7 @@ model TournamentDate {
   name          String
   eventDate     DateTime
   status        DateStatus         @default(DRAFT)
+  closedAt      DateTime?
   createdAt     DateTime           @default(now())
   registrations DateRegistration[]
   draws         DateDraw[]
@@ -113,6 +114,7 @@ model ZoneMatch {
 model RankingPointEntry {
   id        Int      @id @default(autoincrement())
   playerId  Int
+  dateId    Int?
   points    Int
   reason    String
   manual    Boolean  @default(false)

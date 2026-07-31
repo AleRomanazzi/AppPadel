@@ -1,148 +1,132 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { TournamentBracket } from "./components/TournamentBracket";
+import { ScoreInput, isValidSetScore } from "./components/ScoreInput";
+import { ADMIN_TOKEN_KEY, api, apiAdmin } from "./lib/api";
+import type {
+  BracketMatch,
+  DateWorkspace,
+  HistoryResponse,
+  LedgerEntry,
+  Player,
+  Ranking,
+  TournamentDate,
+  ZoneComputed
+} from "./lib/types";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
-const ADMIN_TOKEN_KEY = "apppadel_admin_token";
+type AdminSection = "fecha" | "jugadores" | "historial" | "puntos";
+type DateStep = 1 | 2 | 3 | 4 | 5;
 
-type Player = { id: number; nickname: string };
-type Ranking = { playerId: number; nickname: string; points: number };
-type HistoryResponse = { exists: boolean; message: string };
-type TournamentDate = { id: number; name: string; eventDate: string; status: string };
-type DrawPairView = { id: number; player1: number; player2: number; player1Nickname: string; player2Nickname: string };
-type BracketMatch = {
-  id: number;
-  round: number;
-  position: number;
-  pairAPlayer1: number | null;
-  pairAPlayer2: number | null;
-  pairBPlayer1: number | null;
-  pairBPlayer2: number | null;
-  pairA?: string;
-  pairB?: string;
-};
-type ZoneComputed = {
-  id: number;
-  name: string;
-  pairs: Array<{ key: string; label: string; player1: number; player2: number; wins: number; played: number }>;
-  matches: Array<{
-    id: number;
-    pairAKey: string;
-    pairBKey: string;
-    pairALabel: string;
-    pairBLabel: string;
-    score: string | null;
-    winnerPairKey: string | null;
-  }>;
-  qualifiers: Array<{ key: string; label: string; player1: number; player2: number }>;
-};
-type LedgerEntry = {
-  id: number;
-  points: number;
-  reason: string;
-  manual: boolean;
-  createdAt: string;
-  player: Player;
-};
-type DateWorkspace = {
-  date: TournamentDate;
-  registrations: Player[];
-  seeds: Array<{ playerId: number; nickname: string }>;
-  draw: { id: number; status: string; pairs: DrawPairView[] } | null;
-  zones: Array<{ id: number; name: string; size: number }>;
-  bracket: BracketMatch[];
-  zonesComputed?: ZoneComputed[];
-};
-
-async function api<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options
+const formatEventDate = (value: string) =>
+  new Date(value).toLocaleDateString("es-AR", {
+    timeZone: "UTC",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
   });
-  if (!response.ok) {
-    const errorBody = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(errorBody?.error ?? `API error ${response.status}`);
-  }
-  if (response.status === 204) return {} as T;
-  return response.json() as Promise<T>;
-}
+
+const DATE_STEPS: Array<{ id: DateStep; label: string }> = [
+  { id: 1, label: "1. Quién juega" },
+  { id: 2, label: "2. Parejas" },
+  { id: 3, label: "3. Zonas" },
+  { id: 4, label: "4. Cuadro" },
+  { id: 5, label: "5. Cerrar" }
+];
 
 function App() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isDisplayMode = location.pathname === "/pantalla";
   const [adminToken, setAdminToken] = useState<string | null>(localStorage.getItem(ADMIN_TOKEN_KEY));
   const [loginUser, setLoginUser] = useState("admin");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [adminSection, setAdminSection] = useState<AdminSection>("fecha");
+  const [dateStep, setDateStep] = useState<DateStep>(1);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   const [players, setPlayers] = useState<Player[]>([]);
   const [ranking, setRanking] = useState<Ranking[]>([]);
-  const [blacklist, setBlacklist] = useState<Player[]>([]);
-  const [selectedBlacklistIds, setSelectedBlacklistIds] = useState<number[]>([]);
-  const [blacklistCandidate, setBlacklistCandidate] = useState("");
   const [nickname, setNickname] = useState("");
+  const [editingPlayerId, setEditingPlayerId] = useState<number | null>(null);
+  const [editingNickname, setEditingNickname] = useState("");
   const [formError, setFormError] = useState("");
+
   const [historyA, setHistoryA] = useState("");
   const [historyB, setHistoryB] = useState("");
   const [historyMessage, setHistoryMessage] = useState("");
   const [historyLookupPlayer, setHistoryLookupPlayer] = useState("");
   const [historyLookupResult, setHistoryLookupResult] = useState<Player[]>([]);
-  const [historyLookupMessage, setHistoryLookupMessage] = useState("");
-  const [adminError, setAdminError] = useState("");
+
   const [dates, setDates] = useState<TournamentDate[]>([]);
   const [newDateName, setNewDateName] = useState("");
   const [newDateValue, setNewDateValue] = useState("");
   const [selectedDateId, setSelectedDateId] = useState<number | null>(null);
   const [attendeeIds, setAttendeeIds] = useState<number[]>([]);
-  const [participantsTarget, setParticipantsTarget] = useState<number>(0);
-  const [seedIds, setSeedIds] = useState<number[]>([]);
-  const [drawConflicts, setDrawConflicts] = useState<string[]>([]);
   const [dateWorkspace, setDateWorkspace] = useState<DateWorkspace | null>(null);
   const [dateMessage, setDateMessage] = useState("");
+  const [seedModeMessage, setSeedModeMessage] = useState("");
+  const [drawConflicts, setDrawConflicts] = useState<string[]>([]);
   const [manualPairs, setManualPairs] = useState<Array<{ player1: number; player2: number }>>([]);
   const [manualPairA, setManualPairA] = useState("");
   const [manualPairB, setManualPairB] = useState("");
+  const [zoneScores, setZoneScores] = useState<Record<number, string>>({});
+  const [bracketScores, setBracketScores] = useState<Record<number, string>>({});
+
   const [publicDates, setPublicDates] = useState<TournamentDate[]>([]);
   const [publicDateId, setPublicDateId] = useState<number | null>(null);
   const [publicBracket, setPublicBracket] = useState<BracketMatch[]>([]);
   const [publicZones, setPublicZones] = useState<ZoneComputed[]>([]);
+
   const [manualPointsPlayerId, setManualPointsPlayerId] = useState("");
   const [manualPointsValue, setManualPointsValue] = useState("");
   const [manualPointsReason, setManualPointsReason] = useState("");
   const [manualPointsBatch, setManualPointsBatch] = useState<Array<{ playerId: number; points: number; reason: string }>>([]);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
+  const [adminError, setAdminError] = useState("");
 
-  const apiAdmin = <T,>(path: string, options?: RequestInit): Promise<T> =>
-    api<T>(path, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${adminToken ?? ""}`
-      }
-    });
+  const activePlayers = useMemo(() => players.filter((p) => p.active !== false), [players]);
+  const dateLocked = Boolean(dateWorkspace?.locked);
 
   const loadPublicData = async () => {
-    const [rankingData, datesData] = await Promise.all([api<Ranking[]>("/ranking"), api<TournamentDate[]>("/public/dates")]);
+    const [rankingData, datesData] = await Promise.all([
+      api<Ranking[]>("/ranking"),
+      api<TournamentDate[]>("/public/dates")
+    ]);
     setRanking(rankingData);
     setPublicDates(datesData);
     if (datesData.length > 0 && !publicDateId) setPublicDateId(datesData[0].id);
   };
 
   const loadAdminData = async () => {
-    const [playersData, blacklistData, datesData] = await Promise.all([
-      apiAdmin<Player[]>("/players"),
-      apiAdmin<Player[]>("/blacklist"),
-      apiAdmin<TournamentDate[]>("/dates")
+    const [playersData, datesData] = await Promise.all([
+      apiAdmin<Player[]>(adminToken!, "/players"),
+      apiAdmin<TournamentDate[]>(adminToken!, "/dates")
     ]);
     setPlayers(playersData);
-    setBlacklist(blacklistData);
     setDates(datesData);
-    setSelectedBlacklistIds(blacklistData.map((player) => player.id));
-    if (!selectedDateId && datesData.length > 0) {
-      setSelectedDateId(datesData[0].id);
-    }
+    if (!selectedDateId && datesData.length > 0) setSelectedDateId(datesData[0].id);
   };
 
-  const loadLedger = async () => {
-    const data = await apiAdmin<LedgerEntry[]>("/ranking/ledger");
-    setLedger(data);
+  const refreshWorkspace = async (dateId: number) => {
+    const workspace = await apiAdmin<DateWorkspace>(adminToken!, `/dates/${dateId}/workspace`);
+    setDateWorkspace(workspace);
+    setAttendeeIds(workspace.registrations.map((player) => player.id));
+    setManualPairs(workspace.draw?.pairs.map((pair) => ({ player1: pair.player1, player2: pair.player2 })) ?? []);
+    const nextZoneScores: Record<number, string> = {};
+    workspace.zonesComputed?.forEach((zone) => {
+      zone.matches.forEach((match) => {
+        if (match.score) nextZoneScores[match.id] = match.score;
+      });
+    });
+    setZoneScores(nextZoneScores);
+    const nextBracketScores: Record<number, string> = {};
+    workspace.bracket.forEach((match) => {
+      if (match.score) nextBracketScores[match.id] = match.score;
+    });
+    setBracketScores(nextBracketScores);
+    return workspace;
   };
 
   useEffect(() => {
@@ -151,224 +135,45 @@ function App() {
 
   useEffect(() => {
     if (!publicDateId) return;
-    void Promise.all([
-      api<{ bracket: BracketMatch[] }>(`/public/dates/${publicDateId}/bracket`),
-      api<{ zones: ZoneComputed[] }>(`/public/dates/${publicDateId}/zones`)
-    ])
-      .then(([bracketData, zonesData]) => {
-        setPublicBracket(bracketData.bracket);
-        setPublicZones(zonesData.zones);
-      })
-      .catch(() => {
-        setPublicBracket([]);
-        setPublicZones([]);
-      });
-  }, [publicDateId]);
+    const loadDateViews = () =>
+      Promise.all([
+        api<{ bracket: BracketMatch[] }>(`/public/dates/${publicDateId}/bracket`),
+        api<{ zones: ZoneComputed[] }>(`/public/dates/${publicDateId}/zones`)
+      ])
+        .then(([bracketData, zonesData]) => {
+          setPublicBracket(bracketData.bracket);
+          setPublicZones(zonesData.zones);
+        })
+        .catch(() => {
+          setPublicBracket([]);
+          setPublicZones([]);
+        });
+
+    void loadDateViews();
+    if (!isDisplayMode) return;
+    const timer = window.setInterval(() => {
+      void loadPublicData();
+      void loadDateViews();
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [publicDateId, isDisplayMode]);
 
   useEffect(() => {
-    if (adminToken) {
-      void loadAdminData().catch((error) => {
-        setAdminError(error instanceof Error ? error.message : "No se pudo cargar panel admin");
-      });
-      void loadLedger().catch(() => setLedger([]));
-    }
+    if (!adminToken) return;
+    void loadAdminData().catch((error) => {
+      setAdminError(error instanceof Error ? error.message : "No se pudo cargar el panel");
+    });
+    void apiAdmin<LedgerEntry[]>(adminToken, "/ranking/ledger")
+      .then(setLedger)
+      .catch(() => setLedger([]));
   }, [adminToken]);
 
   useEffect(() => {
     if (!adminToken || !selectedDateId) return;
-    void apiAdmin<DateWorkspace>(`/dates/${selectedDateId}/workspace`)
-      .then((workspace) => {
-        setDateWorkspace(workspace);
-        setAttendeeIds(workspace.registrations.map((player) => player.id));
-        setParticipantsTarget(workspace.registrations.length);
-        setSeedIds(workspace.seeds.map((seed) => seed.playerId));
-        setManualPairs(workspace.draw?.pairs.map((pair) => ({ player1: pair.player1, player2: pair.player2 })) ?? []);
-      })
-      .catch((error) => {
-        setAdminError(error instanceof Error ? error.message : "No se pudo cargar la fecha");
-      });
+    void refreshWorkspace(selectedDateId).catch((error) => {
+      setAdminError(error instanceof Error ? error.message : "No se pudo cargar la fecha");
+    });
   }, [adminToken, selectedDateId]);
-
-  const playerOptions = useMemo(
-    () => players.map((p) => ({ value: String(p.id), label: p.nickname })),
-    [players]
-  );
-
-  const createPlayer = async () => {
-    setFormError("");
-    try {
-      await apiAdmin("/players", {
-        method: "POST",
-        body: JSON.stringify({ nickname })
-      });
-      setNickname("");
-      await loadAdminData();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "No se pudo guardar el jugador";
-      setFormError(message);
-    }
-  };
-
-  const addToBlacklist = async () => {
-    if (!blacklistCandidate) return;
-    const nextIds = Array.from(new Set([...selectedBlacklistIds, Number(blacklistCandidate)]));
-    setSelectedBlacklistIds(nextIds);
-    const data = await apiAdmin<Player[]>("/blacklist", {
-      method: "PUT",
-      body: JSON.stringify({ playerIds: nextIds })
-    });
-    setBlacklist(data);
-    setBlacklistCandidate("");
-  };
-
-  const removeFromBlacklist = async (playerId: number) => {
-    const nextIds = selectedBlacklistIds.filter((id) => id !== playerId);
-    setSelectedBlacklistIds(nextIds);
-    const data = await apiAdmin<Player[]>("/blacklist", {
-      method: "PUT",
-      body: JSON.stringify({ playerIds: nextIds })
-    });
-    setBlacklist(data);
-  };
-
-  const createTournamentDate = async () => {
-    if (!newDateName.trim() || !newDateValue) return;
-    try {
-      const created = await apiAdmin<TournamentDate>("/dates", {
-        method: "POST",
-        body: JSON.stringify({ name: newDateName.trim(), eventDate: newDateValue })
-      });
-      setDates((prev) => [created, ...prev]);
-      setSelectedDateId(created.id);
-      setNewDateName("");
-      setNewDateValue("");
-      setDateMessage("Fecha creada.");
-    } catch (error) {
-      setDateMessage(error instanceof Error ? error.message : "No se pudo crear la fecha.");
-    }
-  };
-
-  const saveRegistrations = async () => {
-    if (!selectedDateId) return;
-    if (participantsTarget > 0 && attendeeIds.length !== participantsTarget) {
-      setDateMessage(`Debes seleccionar exactamente ${participantsTarget} participantes.`);
-      return;
-    }
-    await apiAdmin(`/dates/${selectedDateId}/registrations`, {
-      method: "PUT",
-      body: JSON.stringify({ playerIds: attendeeIds })
-    });
-    setDateMessage("Asistentes guardados.");
-    const workspace = await apiAdmin<DateWorkspace>(`/dates/${selectedDateId}/workspace`);
-    setDateWorkspace(workspace);
-  };
-
-  const saveSeeds = async () => {
-    if (!selectedDateId) return;
-    await apiAdmin(`/dates/${selectedDateId}/seeds`, {
-      method: "POST",
-      body: JSON.stringify({ playerIds: seedIds.slice(0, 4) })
-    });
-    setDateMessage("Cabezas de serie guardadas.");
-    const workspace = await apiAdmin<DateWorkspace>(`/dates/${selectedDateId}/workspace`);
-    setDateWorkspace(workspace);
-  };
-
-  const generateDraw = async () => {
-    if (!selectedDateId) return;
-    const result = await apiAdmin<{ conflicts: string[] }>(`/dates/${selectedDateId}/draw/generate`, {
-      method: "POST"
-    });
-    setDrawConflicts(result.conflicts);
-    setDateMessage("Sorteo generado.");
-    const workspace = await apiAdmin<DateWorkspace>(`/dates/${selectedDateId}/workspace`);
-    setDateWorkspace(workspace);
-  };
-
-  const generateZones = async () => {
-    if (!selectedDateId) return;
-    await apiAdmin(`/dates/${selectedDateId}/zones/generate`, { method: "POST" });
-    setDateMessage("Zonas generadas.");
-    const workspace = await apiAdmin<DateWorkspace>(`/dates/${selectedDateId}/workspace`);
-    setDateWorkspace(workspace);
-  };
-
-  const addManualPair = () => {
-    if (!manualPairA || !manualPairB) return;
-    const p1 = Number(manualPairA);
-    const p2 = Number(manualPairB);
-    if (p1 === p2) return;
-    const used = new Set(manualPairs.flatMap((pair) => [pair.player1, pair.player2]));
-    if (used.has(p1) || used.has(p2)) return;
-    setManualPairs((prev) => [...prev, { player1: p1, player2: p2 }]);
-    setManualPairA("");
-    setManualPairB("");
-  };
-
-  const removeManualPair = (index: number) => {
-    setManualPairs((prev) => prev.filter((_, idx) => idx !== index));
-  };
-
-  const confirmManualDraw = async () => {
-    if (!selectedDateId) return;
-    await apiAdmin(`/dates/${selectedDateId}/draw/manual-adjust`, {
-      method: "PUT",
-      body: JSON.stringify({ pairs: manualPairs })
-    });
-    setDateMessage("Sorteo manual confirmado.");
-    const workspace = await apiAdmin<DateWorkspace>(`/dates/${selectedDateId}/workspace`);
-    setDateWorkspace(workspace);
-  };
-
-  const generateBracket = async () => {
-    if (!selectedDateId) return;
-    await apiAdmin(`/dates/${selectedDateId}/bracket/generate`, { method: "POST" });
-    setDateMessage("Cuadro eliminatorio generado.");
-    const workspace = await apiAdmin<DateWorkspace>(`/dates/${selectedDateId}/workspace`);
-    setDateWorkspace(workspace);
-    await loadPublicData();
-  };
-
-  const updateZoneMatchWinner = async (matchId: number, winnerPairKey: string | null) => {
-    if (!selectedDateId) return;
-    await apiAdmin(`/dates/${selectedDateId}/zones/matches/${matchId}`, {
-      method: "PUT",
-      body: JSON.stringify({ winnerPairKey })
-    });
-    const workspace = await apiAdmin<DateWorkspace>(`/dates/${selectedDateId}/workspace`);
-    setDateWorkspace(workspace);
-    setDateMessage("Resultado de zona actualizado.");
-  };
-
-  const addManualPointsToBatch = () => {
-    if (!manualPointsPlayerId || !manualPointsValue || !manualPointsReason.trim()) return;
-    setManualPointsBatch((prev) => [
-      ...prev,
-      {
-        playerId: Number(manualPointsPlayerId),
-        points: Number(manualPointsValue),
-        reason: manualPointsReason.trim()
-      }
-    ]);
-    setManualPointsPlayerId("");
-    setManualPointsValue("");
-    setManualPointsReason("");
-  };
-
-  const removeManualPointsFromBatch = (index: number) => {
-    setManualPointsBatch((prev) => prev.filter((_, idx) => idx !== index));
-  };
-
-  const submitManualPointsBatch = async () => {
-    if (manualPointsBatch.length === 0) return;
-    await apiAdmin("/ranking/manual-adjustments", {
-      method: "POST",
-      body: JSON.stringify({ items: manualPointsBatch })
-    });
-    setDateMessage("Puntos manuales cargados.");
-    setManualPointsBatch([]);
-    await Promise.all([loadPublicData(), loadLedger()]);
-  };
 
   const login = async () => {
     setLoginError("");
@@ -380,7 +185,6 @@ function App() {
       localStorage.setItem(ADMIN_TOKEN_KEY, response.token);
       setAdminToken(response.token);
       setLoginPassword("");
-      setAdminError("");
       navigate("/admin");
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : "No se pudo iniciar sesión");
@@ -393,586 +197,1079 @@ function App() {
     navigate("/");
   };
 
+  const createPlayer = async () => {
+    setFormError("");
+    try {
+      await apiAdmin(adminToken!, "/players", {
+        method: "POST",
+        body: JSON.stringify({ nickname })
+      });
+      setNickname("");
+      await loadAdminData();
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "No se pudo guardar");
+    }
+  };
+
+  const savePlayerEdit = async () => {
+    if (!editingPlayerId || !editingNickname.trim()) return;
+    try {
+      await apiAdmin(adminToken!, `/players/${editingPlayerId}`, {
+        method: "PUT",
+        body: JSON.stringify({ nickname: editingNickname.trim() })
+      });
+      setEditingPlayerId(null);
+      setEditingNickname("");
+      await loadAdminData();
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "No se pudo editar");
+    }
+  };
+
+  const createTournamentDate = async () => {
+    if (!newDateName.trim() || !newDateValue) {
+      setDateMessage("Completá el nombre y el día de la fecha.");
+      return;
+    }
+    try {
+      const created = await apiAdmin<TournamentDate>(adminToken!, "/dates", {
+        method: "POST",
+        body: JSON.stringify({ name: newDateName.trim(), eventDate: newDateValue })
+      });
+      setDates((prev) => [created, ...prev.filter((d) => d.id !== created.id)]);
+      setPublicDates((prev) => [created, ...prev.filter((d) => d.id !== created.id)]);
+      setSelectedDateId(created.id);
+      setPublicDateId(created.id);
+      setNewDateName("");
+      setNewDateValue("");
+      setDateStep(1);
+      setDateMessage(`Fecha creada: ${created.name} (${formatEventDate(created.eventDate)}). Ahora elegí quién juega.`);
+      await loadAdminData();
+      await loadPublicData();
+    } catch (error) {
+      setDateMessage(error instanceof Error ? error.message : "No se pudo crear la fecha");
+    }
+  };
+
+  const saveRegistrations = async () => {
+    if (!selectedDateId) return;
+    if (attendeeIds.length < 2 || attendeeIds.length % 2 !== 0) {
+      setDateMessage("Elegí una cantidad par de jugadores (mínimo 2).");
+      return;
+    }
+    try {
+      await apiAdmin(adminToken!, `/dates/${selectedDateId}/registrations`, {
+        method: "PUT",
+        body: JSON.stringify({ playerIds: attendeeIds })
+      });
+      await refreshWorkspace(selectedDateId);
+      setDateMessage("Jugadores guardados.");
+      setDateStep(2);
+    } catch (error) {
+      setDateMessage(error instanceof Error ? error.message : "No se pudieron guardar");
+    }
+  };
+
+  const prepareAndDraw = async () => {
+    if (!selectedDateId) return;
+    try {
+      const seeds = await apiAdmin<{
+        mode: "random" | "ranking";
+        zoneCount: number;
+        seeds: Array<{ nickname: string }>;
+      }>(adminToken!, `/dates/${selectedDateId}/seeds/auto`, { method: "POST" });
+      setSeedModeMessage(
+        seeds.mode === "random"
+          ? `Primera fecha: ${seeds.zoneCount} cabezas al azar.`
+          : `Cabezas = top ${seeds.zoneCount} del ranking.`
+      );
+      const draw = await apiAdmin<{ conflicts: string[] }>(adminToken!, `/dates/${selectedDateId}/draw/generate`, {
+        method: "POST"
+      });
+      setDrawConflicts(draw.conflicts);
+      await refreshWorkspace(selectedDateId);
+      await loadAdminData();
+      setDateMessage(`Parejas armadas. Cabezas: ${seeds.seeds.map((s) => s.nickname).join(", ")}`);
+    } catch (error) {
+      setDateMessage(error instanceof Error ? error.message : "No se pudieron armar las parejas");
+    }
+  };
+
+  const confirmManualDraw = async () => {
+    if (!selectedDateId) return;
+    try {
+      await apiAdmin(adminToken!, `/dates/${selectedDateId}/draw/manual-adjust`, {
+        method: "PUT",
+        body: JSON.stringify({ pairs: manualPairs })
+      });
+      await refreshWorkspace(selectedDateId);
+      setDateMessage("Parejas manuales guardadas.");
+    } catch (error) {
+      setDateMessage(error instanceof Error ? error.message : "No se pudo guardar el ajuste");
+    }
+  };
+
+  const generateZones = async () => {
+    if (!selectedDateId) return;
+    try {
+      await apiAdmin(adminToken!, `/dates/${selectedDateId}/zones/generate`, { method: "POST" });
+      await refreshWorkspace(selectedDateId);
+      setDateMessage("Zonas listas. Cargá los resultados de cada partido.");
+      setDateStep(3);
+    } catch (error) {
+      setDateMessage(error instanceof Error ? error.message : "No se pudieron generar zonas");
+    }
+  };
+
+  const updateZoneMatch = async (matchId: number, winnerPairKey: string | null, score: string) => {
+    if (!selectedDateId) return;
+    try {
+      await apiAdmin(adminToken!, `/dates/${selectedDateId}/zones/matches/${matchId}`, {
+        method: "PUT",
+        body: JSON.stringify({ winnerPairKey, score: score.trim() || null })
+      });
+      await refreshWorkspace(selectedDateId);
+      setDateMessage("Resultado actualizado.");
+    } catch (error) {
+      setDateMessage(error instanceof Error ? error.message : "No se pudo guardar el resultado");
+    }
+  };
+
+  const generateBracket = async () => {
+    if (!selectedDateId) return;
+    try {
+      await apiAdmin(adminToken!, `/dates/${selectedDateId}/bracket/generate`, { method: "POST" });
+      await refreshWorkspace(selectedDateId);
+      await loadPublicData();
+      setDateMessage("Cuadro armado.");
+      setDateStep(4);
+    } catch (error) {
+      setDateMessage(error instanceof Error ? error.message : "No se pudo armar el cuadro");
+    }
+  };
+
+  const updateBracketMatch = async (matchId: number, winnerPairKey: string | null, score: string) => {
+    if (!selectedDateId) return;
+    try {
+      await apiAdmin(adminToken!, `/dates/${selectedDateId}/bracket/matches/${matchId}`, {
+        method: "PUT",
+        body: JSON.stringify({ winnerPairKey, score: score.trim() || null })
+      });
+      await refreshWorkspace(selectedDateId);
+      setDateMessage("Resultado del cuadro actualizado.");
+    } catch (error) {
+      setDateMessage(error instanceof Error ? error.message : "No se pudo guardar");
+    }
+  };
+
+  const closeDate = async () => {
+    if (!selectedDateId) return;
+    try {
+      const result = await apiAdmin<{ editableUntil: string | null }>(adminToken!, `/dates/${selectedDateId}/close`, {
+        method: "POST"
+      });
+      await refreshWorkspace(selectedDateId);
+      await Promise.all([loadPublicData(), loadAdminData()]);
+      setDateMessage(
+        result.editableUntil
+          ? `Fecha cerrada. Se puede corregir hasta ${new Date(result.editableUntil).toLocaleString()}.`
+          : "Fecha cerrada."
+      );
+      setDateStep(5);
+    } catch (error) {
+      setDateMessage(error instanceof Error ? error.message : "No se pudo cerrar la fecha");
+    }
+  };
+
   return (
-    <main className="mx-auto min-h-screen w-full max-w-6xl px-3 py-4 sm:px-6">
-      <header className="mb-4 flex items-center justify-between gap-3 rounded-2xl bg-slate-900 px-4 py-3 text-white shadow-lg">
-        <div>
-          <h1 className="text-xl font-bold">AppPadel</h1>
-          <p className="text-xs text-slate-300 sm:text-sm">Torneo interno de amigos</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link to="/" className="rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800">
-            Inicio
-          </Link>
-          {adminToken ? (
-            <>
-              <Link to="/admin" className="rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800">
-                Admin
-              </Link>
-              <button onClick={logout} className="rounded-md bg-rose-600 px-3 py-1.5 text-sm hover:bg-rose-500">
-                Salir
-              </button>
-            </>
-          ) : (
-            <Link to="/admin" className="rounded-md bg-cyan-500 px-3 py-1.5 text-sm font-semibold text-slate-900 hover:bg-cyan-400">
-              Login admin
+    <div className={isDisplayMode ? "display-shell" : "app-shell"}>
+      {!isDisplayMode ? (
+        <header className="app-header">
+          <div>
+            <p className="brand">AppPadel</p>
+            <p>Torneo de amigos · fácil de seguir</p>
+          </div>
+          <div className="nav-actions">
+            <Link className="btn btn-ghost" to="/">
+              Ver torneo
             </Link>
-          )}
-        </div>
-      </header>
+            <Link className="btn btn-ghost" to="/pantalla">
+              Pantalla grande
+            </Link>
+            {adminToken ? (
+              <>
+                <Link className="btn btn-ghost" to="/admin">
+                  Organizar
+                </Link>
+                <button className="btn btn-ghost" onClick={logout}>
+                  Salir
+                </button>
+              </>
+            ) : (
+              <Link className="btn btn-ball" to="/admin">
+                Entrar como organizador
+              </Link>
+            )}
+          </div>
+        </header>
+      ) : null}
 
       <Routes>
         <Route
           path="/"
           element={
-            <section className="grid gap-3 md:grid-cols-2">
-              <article className="rounded-2xl bg-white p-4 shadow-md">
-                <h2 className="mb-2 text-lg font-semibold text-slate-900">Ranking público</h2>
-                <ol className="space-y-2">
+            <div className="stack">
+              <section className="panel">
+                <h2>Ranking</h2>
+                <p className="panel-lead">Así van los puntos de la temporada.</p>
+                <div className="stack">
                   {ranking.map((row, index) => (
-                    <li key={row.playerId} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
-                      <span className="font-medium text-slate-800">
-                        {index + 1}. {row.nickname}
+                    <div key={row.playerId} className="rank-row">
+                      <span>
+                        <strong>{index + 1}.</strong> {row.nickname}
                       </span>
-                      <span className="rounded-full bg-indigo-100 px-2 py-1 text-xs font-semibold text-indigo-700">
-                        {row.points} pts
-                      </span>
-                    </li>
+                      <span className="rank-points">{row.points} pts</span>
+                    </div>
                   ))}
-                </ol>
-              </article>
-              <article className="rounded-2xl bg-white p-4 shadow-md">
-                <h2 className="mb-2 text-lg font-semibold text-slate-900">Zonas y cuadro por fecha</h2>
-                <select
-                  className="mb-3 w-full rounded-lg border border-slate-200 px-3 py-2"
-                  value={publicDateId ?? ""}
-                  onChange={(e) => setPublicDateId(Number(e.target.value))}
-                >
-                  <option value="">Seleccionar fecha</option>
-                  {publicDates.map((date) => (
-                    <option key={date.id} value={date.id}>
-                      {date.name} - {new Date(date.eventDate).toLocaleDateString()}
-                    </option>
-                  ))}
-                </select>
-                <h3 className="mb-1 text-sm font-semibold text-slate-700">Zonas</h3>
-                <ul className="mb-3 space-y-2 text-sm">
+                  {ranking.length === 0 ? <p className="muted">Todavía no hay puntos cargados.</p> : null}
+                </div>
+              </section>
+
+              <section className="panel">
+                <h2>Fecha en curso</h2>
+                <p className="panel-lead">Elegí la fecha para ver zonas y el cuadro.</p>
+                <div className="field">
+                  <label htmlFor="public-date">Fecha</label>
+                  <select
+                    id="public-date"
+                    value={publicDateId ?? ""}
+                    onChange={(e) => setPublicDateId(Number(e.target.value))}
+                  >
+                    <option value="">Elegir fecha</option>
+                    {publicDates.map((date) => (
+                      <option key={date.id} value={date.id}>
+                        {date.name} · {formatEventDate(date.eventDate)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <h3 style={{ marginTop: "1rem" }}>Zonas</h3>
+                <div className="stack" style={{ marginTop: "0.75rem" }}>
                   {publicZones.map((zone) => (
-                    <li key={zone.id} className="rounded-lg bg-slate-50 p-2">
-                      <div className="text-xs font-semibold text-slate-500">{zone.name}</div>
-                      {zone.pairs.map((pair) => (
-                        <div key={pair.key} className="flex items-center justify-between">
-                          <span>{pair.label}</span>
-                          <span className="text-xs text-slate-500">{pair.wins} G</span>
-                        </div>
-                      ))}
-                    </li>
-                  ))}
-                  {publicDateId && publicZones.length === 0 ? <li className="text-slate-500">Aún no hay zonas generadas.</li> : null}
-                </ul>
-                <h3 className="mb-1 text-sm font-semibold text-slate-700">Cuadro eliminatorio</h3>
-                <ul className="space-y-2 text-sm">
-                  {publicBracket.map((match) => (
-                    <li key={match.id} className="rounded-lg bg-slate-50 p-2">
-                      <div className="text-xs font-semibold text-slate-500">
-                        Ronda {match.round} - Match {match.position}
+                    <div key={zone.id} className="zone-block">
+                      <h3>{zone.name}</h3>
+                      <div className="stack">
+                        {zone.pairs.map((pair, idx) => (
+                          <div key={pair.key} className="pair-row">
+                            <span>
+                              {idx + 1}. {pair.label}
+                            </span>
+                            <span className="muted">{pair.wins} ganados</span>
+                          </div>
+                        ))}
                       </div>
-                      <div>{match.pairA ?? "BYE"}</div>
-                      <div>{match.pairB ?? "BYE"}</div>
-                    </li>
+                      <div className="stack" style={{ marginTop: "0.75rem" }}>
+                        {zone.matches.map((match) => (
+                          <div key={match.id} className="pair-row" style={{ display: "block" }}>
+                            <div>
+                              {match.pairALabel} vs {match.pairBLabel}
+                            </div>
+                            {match.score ? <div className="muted">{match.score}</div> : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   ))}
-                  {publicDateId && publicBracket.length === 0 ? <li className="text-slate-500">Aún no hay cuadro generado.</li> : null}
-                </ul>
-              </article>
-            </section>
+                  {publicDateId && publicZones.length === 0 ? (
+                    <p className="muted">Aún no hay zonas para esta fecha.</p>
+                  ) : null}
+                </div>
+
+                <h3 style={{ marginTop: "1.25rem" }}>Cuadro eliminatorio</h3>
+                <div style={{ marginTop: "0.75rem" }}>
+                  <TournamentBracket matches={publicBracket} />
+                </div>
+                <Link className="btn btn-primary" to="/pantalla" style={{ marginTop: "1rem" }}>
+                  Abrir pantalla grande (TV / celular)
+                </Link>
+              </section>
+            </div>
           }
         />
+
+        <Route
+          path="/pantalla"
+          element={
+            <div className="display-layout">
+              <header className="display-top">
+                <div>
+                  <p className="brand">AppPadel</p>
+                  <p>Modo pantalla · se actualiza solo</p>
+                </div>
+                <div className="nav-actions">
+                  <select
+                    className="display-select"
+                    value={publicDateId ?? ""}
+                    onChange={(e) => setPublicDateId(Number(e.target.value))}
+                    aria-label="Fecha a mostrar"
+                  >
+                    <option value="">Elegir fecha</option>
+                    {publicDates.map((date) => (
+                      <option key={date.id} value={date.id}>
+                        {date.name} · {formatEventDate(date.eventDate)}
+                      </option>
+                    ))}
+                  </select>
+                  <Link className="btn btn-ball" to="/">
+                    Salir de pantalla
+                  </Link>
+                </div>
+              </header>
+
+              <div className="display-grid">
+                <section className="display-panel">
+                  <h2>Ranking</h2>
+                  <ol className="display-rank">
+                    {ranking.slice(0, 12).map((row, index) => (
+                      <li key={row.playerId}>
+                        <span>
+                          {index + 1}. {row.nickname}
+                        </span>
+                        <strong>{row.points}</strong>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+
+                <section className="display-panel display-wide">
+                  <h2>Zonas</h2>
+                  <div className="display-zones">
+                    {publicZones.map((zone) => (
+                      <div key={zone.id} className="display-zone">
+                        <h3>{zone.name}</h3>
+                        {zone.pairs.map((pair, idx) => (
+                          <div key={pair.key} className="display-zone-row">
+                            <span>
+                              {idx + 1}. {pair.label}
+                            </span>
+                            <span>{pair.wins}G</span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                    {publicDateId && publicZones.length === 0 ? (
+                      <p className="muted">Sin zonas todavía.</p>
+                    ) : null}
+                  </div>
+                </section>
+              </div>
+
+              <section className="display-panel" style={{ marginTop: "1rem" }}>
+                <h2>Cuadro eliminatorio</h2>
+                <TournamentBracket matches={publicBracket} />
+              </section>
+            </div>
+          }
+        />
+
         <Route
           path="/admin"
           element={
             !adminToken ? (
-              <section className="mx-auto w-full max-w-md rounded-2xl bg-white p-4 shadow-md">
-                <h2 className="mb-3 text-lg font-semibold text-slate-900">Ingreso administrador</h2>
-                <div className="space-y-2">
+              <section className="panel" style={{ maxWidth: 420, margin: "0 auto" }}>
+                <h2>Organizador</h2>
+                <p className="panel-lead">Solo para quien arma el torneo del día.</p>
+                <div className="field">
+                  <label htmlFor="user">Usuario</label>
+                  <input id="user" value={loginUser} onChange={(e) => setLoginUser(e.target.value)} />
+                </div>
+                <div className="field">
+                  <label htmlFor="pass">Contraseña</label>
                   <input
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2"
-                    placeholder="Usuario"
-                    value={loginUser}
-                    onChange={(e) => setLoginUser(e.target.value)}
-                  />
-                  <input
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2"
-                    placeholder="Password"
+                    id="pass"
                     type="password"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                   />
-                  <button className="w-full rounded-lg bg-slate-900 px-3 py-2 text-white" onClick={() => void login()}>
-                    Ingresar
-                  </button>
-                  {loginError ? <small className="text-rose-600">{loginError}</small> : null}
                 </div>
+                <button className="btn btn-primary" style={{ width: "100%" }} onClick={() => void login()}>
+                  Entrar
+                </button>
+                {loginError ? <p className="msg msg-error">{loginError}</p> : null}
               </section>
             ) : (
-              <section className="grid gap-3 md:grid-cols-2">
-                <article className="rounded-2xl bg-white p-4 shadow-md">
-                  <h2 className="mb-2 text-lg font-semibold text-slate-900">Alta de jugador</h2>
-                  <input
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2"
-                    placeholder="Apodo"
-                    value={nickname}
-                    onChange={(e) => setNickname(e.target.value)}
-                  />
-                  <button className="mt-2 w-full rounded-lg bg-indigo-600 px-3 py-2 text-white" onClick={() => void createPlayer()}>
-                    Guardar jugador
-                  </button>
-                  {formError ? <small className="text-rose-600">{formError}</small> : null}
-                </article>
-
-                <article className="rounded-2xl bg-white p-4 shadow-md">
-                  <h2 className="mb-2 text-lg font-semibold text-slate-900">Blacklist (grupo)</h2>
-                  <p className="mb-2 text-sm text-slate-600">Al agregar, el cambio impacta inmediatamente.</p>
-                  <select
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2"
-                    value={blacklistCandidate}
-                    onChange={(e) => setBlacklistCandidate(e.target.value)}
-                  >
-                    <option value="">Seleccionar jugador</option>
-                    {playerOptions
-                      .filter((option) => !selectedBlacklistIds.includes(Number(option.value)))
-                      .map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                  </select>
-                  <button className="mt-2 w-full rounded-lg bg-cyan-600 px-3 py-2 text-white" onClick={() => void addToBlacklist()}>
-                    Agregar a blacklist
-                  </button>
-                  <h3 className="mt-3 text-sm font-semibold text-slate-700">Listado actual</h3>
-                  <ul className="mt-2 space-y-1">
-                    {blacklist.map((player) => (
-                      <li key={player.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1.5 text-sm">
-                        <span>{player.nickname}</span>
-                        <button
-                          className="rounded p-1 text-rose-600 hover:bg-rose-50"
-                          aria-label={`Quitar ${player.nickname} de blacklist`}
-                          onClick={() => void removeFromBlacklist(player.id)}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="h-4 w-4 fill-current">
-                            <path d="M9 3h6l1 2h4v2H4V5h4l1-2zm1 6h2v9h-2V9zm4 0h2v9h-2V9zM7 9h2v9H7V9z" />
-                          </svg>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </article>
-
-                <article className="rounded-2xl bg-white p-4 shadow-md">
-                  <h2 className="mb-2 text-lg font-semibold text-slate-900">Historial de parejas</h2>
-                  <select className="w-full rounded-lg border border-slate-200 px-3 py-2" value={historyA} onChange={(e) => setHistoryA(e.target.value)}>
-                    <option value="">Jugador A</option>
-                    {playerOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2"
-                    value={historyB}
-                    onChange={(e) => setHistoryB(e.target.value)}
-                  >
-                    <option value="">Jugador B</option>
-                    {playerOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+              <div className="stack">
+                <nav className="admin-nav" aria-label="Secciones del organizador">
                   <button
-                    className="mt-2 w-full rounded-lg bg-emerald-600 px-3 py-2 text-white"
-                    onClick={async () => {
-                      setHistoryMessage("");
-                      const result = await apiAdmin<HistoryResponse>(`/players/${historyA}/partners-history/${historyB}`, {
-                        method: "POST"
-                      });
-                      setHistoryMessage(result.message);
-                      if (!result.exists) {
-                        setHistoryA("");
-                        setHistoryB("");
-                      }
-                    }}
+                    className={`btn ${adminSection === "fecha" ? "btn-primary" : "btn-soft"}`}
+                    onClick={() => setAdminSection("fecha")}
                   >
-                    Agregar historial
+                    Fecha de hoy
                   </button>
-                  {historyMessage ? <small className="text-slate-600">{historyMessage}</small> : null}
-                </article>
-
-                <article className="rounded-2xl bg-white p-4 shadow-md">
-                  <h2 className="mb-2 text-lg font-semibold text-slate-900">Historial por jugador</h2>
-                  <select
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2"
-                    value={historyLookupPlayer}
-                    onChange={(e) => setHistoryLookupPlayer(e.target.value)}
-                  >
-                    <option value="">Seleccionar jugador</option>
-                    {playerOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
                   <button
-                    className="mt-2 w-full rounded-lg bg-slate-900 px-3 py-2 text-white"
-                    onClick={async () => {
-                      setHistoryLookupMessage("");
-                      if (!historyLookupPlayer) return;
-                      const data = await apiAdmin<Player[]>(`/players/${historyLookupPlayer}/partners-history`);
-                      setHistoryLookupResult(data);
-                    }}
+                    className={`btn ${adminSection === "jugadores" ? "btn-primary" : "btn-soft"}`}
+                    onClick={() => setAdminSection("jugadores")}
                   >
-                    Ver historial
+                    Jugadores
                   </button>
-                  <ul className="mt-2 space-y-1 text-sm">
-                    {historyLookupResult.map((player) => (
-                      <li key={player.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1.5">
-                        <span>{player.nickname}</span>
-                        <button
-                          className="rounded px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100"
-                          onClick={async () => {
-                            if (!historyLookupPlayer) return;
-                            await apiAdmin(`/players/${historyLookupPlayer}/partners-history/${player.id}`, {
-                              method: "DELETE"
-                            });
-                            const data = await apiAdmin<Player[]>(`/players/${historyLookupPlayer}/partners-history`);
-                            setHistoryLookupResult(data);
-                            setHistoryLookupMessage(`Relación eliminada: ${player.nickname}`);
-                          }}
-                        >
-                          Eliminar
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                  {historyLookupMessage ? <small className="text-slate-600">{historyLookupMessage}</small> : null}
-                </article>
+                  <button
+                    className={`btn ${adminSection === "historial" ? "btn-primary" : "btn-soft"}`}
+                    onClick={() => setAdminSection("historial")}
+                  >
+                    Historial
+                  </button>
+                </nav>
 
-                <article className="rounded-2xl bg-white p-4 shadow-md md:col-span-2">
-                  <h2 className="mb-2 text-lg font-semibold text-slate-900">Nueva fecha de torneo</h2>
-                  <div className="grid gap-2 md:grid-cols-3">
-                    <input
-                      className="rounded-lg border border-slate-200 px-3 py-2"
-                      placeholder="Nombre de la fecha"
-                      value={newDateName}
-                      onChange={(e) => setNewDateName(e.target.value)}
-                    />
-                    <input
-                      className="rounded-lg border border-slate-200 px-3 py-2"
-                      type="date"
-                      value={newDateValue}
-                      onChange={(e) => setNewDateValue(e.target.value)}
-                    />
-                    <button className="rounded-lg bg-indigo-600 px-3 py-2 text-white" onClick={() => void createTournamentDate()}>
-                      Crear fecha
+                <details
+                  className="advanced-box"
+                  open={showAdvanced || adminSection === "puntos"}
+                  onToggle={(e) => setShowAdvanced((e.target as HTMLDetailsElement).open)}
+                >
+                  <summary>Opciones avanzadas</summary>
+                  <p className="muted" style={{ margin: "0.5rem 0 0.75rem" }}>
+                    Cosas que casi no hace falta tocar en el día a día.
+                  </p>
+                  <button
+                    className={`btn ${adminSection === "puntos" ? "btn-warn" : "btn-soft"}`}
+                    onClick={() => setAdminSection("puntos")}
+                  >
+                    Ajuste manual de puntos
+                  </button>
+                </details>
+
+                {adminSection === "jugadores" ? (
+                  <section className="panel">
+                    <h2>Jugadores</h2>
+                    <p className="panel-lead">Agregá apodos. Después los marcás en cada fecha.</p>
+                    <div className="field">
+                      <label htmlFor="nick">Apodo nuevo</label>
+                      <input id="nick" value={nickname} onChange={(e) => setNickname(e.target.value)} />
+                    </div>
+                    <button className="btn btn-primary" onClick={() => void createPlayer()}>
+                      Agregar jugador
                     </button>
-                  </div>
-
-                  <div className="mt-3">
-                    <label className="mb-1 block text-sm font-medium text-slate-700">Seleccionar fecha</label>
-                    <select
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2"
-                      value={selectedDateId ?? ""}
-                      onChange={(e) => setSelectedDateId(Number(e.target.value))}
-                    >
-                      <option value="">Elegir fecha</option>
-                      {dates.map((date) => (
-                        <option key={date.id} value={date.id}>
-                          {date.name} - {new Date(date.eventDate).toLocaleDateString()}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="mt-3 grid gap-3 md:grid-cols-3">
-                    <div>
-                      <h3 className="mb-1 text-sm font-semibold text-slate-700">Participantes de la fecha</h3>
-                      <input
-                        className="mb-2 w-full rounded-lg border border-slate-200 px-3 py-2"
-                        type="number"
-                        min={0}
-                        max={players.length}
-                        placeholder="Cantidad de participantes"
-                        value={participantsTarget || ""}
-                        onChange={(e) => setParticipantsTarget(Number(e.target.value))}
-                      />
-                      <div className="max-h-40 space-y-1 overflow-auto rounded-lg border border-slate-200 p-2">
-                        {players.map((player) => (
-                          <label key={player.id} className="flex items-center gap-2 text-sm">
-                            <input
-                              type="checkbox"
-                              checked={attendeeIds.includes(player.id)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setAttendeeIds((prev) => [...new Set([...prev, player.id])]);
-                                } else {
-                                  setAttendeeIds((prev) => prev.filter((id) => id !== player.id));
-                                }
-                              }}
-                            />
-                            <span>{player.nickname}</span>
-                          </label>
-                        ))}
-                      </div>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Seleccionados: {attendeeIds.length}
-                        {participantsTarget > 0 ? ` / ${participantsTarget}` : ""}
-                      </p>
-                      <button className="mt-2 w-full rounded-lg bg-slate-900 px-3 py-2 text-white" onClick={() => void saveRegistrations()}>
-                        Guardar asistentes
-                      </button>
-                    </div>
-
-                    <div>
-                      <h3 className="mb-1 text-sm font-semibold text-slate-700">Cabezas de serie (hasta 4)</h3>
-                      <select
-                        multiple
-                        className="h-40 w-full rounded-lg border border-slate-200 px-2 py-1"
-                        value={seedIds.map(String)}
-                        onChange={(e) =>
-                          setSeedIds(Array.from(e.target.selectedOptions, (option) => Number(option.value)).slice(0, 4))
-                        }
-                      >
-                        {players
-                          .filter((player) => attendeeIds.includes(player.id))
-                          .map((player) => (
-                            <option key={player.id} value={player.id}>
-                              {player.nickname}
-                            </option>
-                          ))}
-                      </select>
-                      <button className="mt-2 w-full rounded-lg bg-amber-600 px-3 py-2 text-white" onClick={() => void saveSeeds()}>
-                        Guardar seeds
-                      </button>
-                    </div>
-
-                    <div className="space-y-2">
-                      <button className="w-full rounded-lg bg-emerald-600 px-3 py-2 text-white" onClick={() => void generateDraw()}>
-                        Generar sorteo automático
-                      </button>
-                      <button className="w-full rounded-lg bg-fuchsia-600 px-3 py-2 text-white" onClick={() => void generateBracket()}>
-                        Generar cuadro eliminatorio
-                      </button>
-                      <button className="w-full rounded-lg bg-cyan-600 px-3 py-2 text-white" onClick={() => void generateZones()}>
-                        Generar zonas
-                      </button>
-                      {dateMessage ? <p className="text-sm text-slate-600">{dateMessage}</p> : null}
-                    </div>
-                  </div>
-
-                  <div className="mt-3 rounded-xl border border-slate-200 p-3">
-                    <h3 className="mb-2 text-sm font-semibold text-slate-700">Ajuste manual del sorteo</h3>
-                    <div className="grid gap-2 md:grid-cols-3">
-                      <select
-                        className="rounded-lg border border-slate-200 px-3 py-2"
-                        value={manualPairA}
-                        onChange={(e) => setManualPairA(e.target.value)}
-                      >
-                        <option value="">Jugador 1</option>
-                        {players.map((player) => (
-                          <option key={player.id} value={player.id}>
-                            {player.nickname}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        className="rounded-lg border border-slate-200 px-3 py-2"
-                        value={manualPairB}
-                        onChange={(e) => setManualPairB(e.target.value)}
-                      >
-                        <option value="">Jugador 2</option>
-                        {players.map((player) => (
-                          <option key={player.id} value={player.id}>
-                            {player.nickname}
-                          </option>
-                        ))}
-                      </select>
-                      <button className="rounded-lg bg-slate-900 px-3 py-2 text-white" onClick={addManualPair}>
-                        Agregar pareja manual
-                      </button>
-                    </div>
-                    <ul className="mt-2 space-y-1 text-sm">
-                      {manualPairs.map((pair, index) => {
-                        const p1 = players.find((p) => p.id === pair.player1)?.nickname ?? `#${pair.player1}`;
-                        const p2 = players.find((p) => p.id === pair.player2)?.nickname ?? `#${pair.player2}`;
-                        return (
-                          <li key={`${pair.player1}-${pair.player2}-${index}`} className="flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1.5">
-                            <span>
-                              {p1} + {p2}
-                            </span>
-                            <button className="text-rose-600" onClick={() => removeManualPair(index)}>
-                              Quitar
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                    <button className="mt-2 rounded-lg bg-amber-600 px-3 py-2 text-white" onClick={() => void confirmManualDraw()}>
-                      Confirmar sorteo manual
-                    </button>
-                  </div>
-
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    <div>
-                      <h3 className="mb-1 text-sm font-semibold text-slate-700">Parejas sorteadas</h3>
-                      <ul className="space-y-1 text-sm">
-                        {dateWorkspace?.draw?.pairs.map((pair) => (
-                          <li key={pair.id} className="rounded-lg bg-slate-50 px-2 py-1.5">
-                            {pair.player1Nickname} + {pair.player2Nickname}
-                          </li>
-                        )) ?? <li className="text-slate-500">Sin sorteo generado.</li>}
-                      </ul>
-                    </div>
-                    <div>
-                      <h3 className="mb-1 text-sm font-semibold text-slate-700">Zonas generadas</h3>
-                      <div className="space-y-2 text-sm">
-                        {dateWorkspace?.zonesComputed?.map((zone) => (
-                          <div key={zone.id} className="rounded-lg bg-slate-50 p-2">
-                            <div className="mb-1 text-xs font-semibold text-slate-600">
-                              {zone.name} - Clasifican: {zone.qualifiers.map((q) => q.label).join(" | ") || "-"}
+                    {formError ? <p className="msg msg-error">{formError}</p> : null}
+                    <div className="stack" style={{ marginTop: "1rem" }}>
+                      {players.map((player) => (
+                        <div key={player.id} className="pair-row">
+                          {editingPlayerId === player.id ? (
+                            <div style={{ display: "grid", gap: "0.4rem", width: "100%" }}>
+                              <input value={editingNickname} onChange={(e) => setEditingNickname(e.target.value)} />
+                              <div style={{ display: "flex", gap: "0.4rem" }}>
+                                <button className="btn btn-ok" onClick={() => void savePlayerEdit()}>
+                                  Guardar
+                                </button>
+                                <button className="btn btn-soft" onClick={() => setEditingPlayerId(null)}>
+                                  Cancelar
+                                </button>
+                              </div>
                             </div>
-                            <ul className="space-y-1">
-                              {zone.matches.map((match) => (
-                                <li key={match.id} className="rounded bg-white px-2 py-1.5">
-                                  <div className="text-xs text-slate-500">
-                                    {match.pairALabel} vs {match.pairBLabel}
-                                  </div>
-                                  <select
-                                    className="mt-1 w-full rounded border border-slate-200 px-2 py-1 text-xs"
-                                    value={match.winnerPairKey ?? ""}
-                                    onChange={(e) =>
-                                      void updateZoneMatchWinner(match.id, e.target.value ? e.target.value : null)
+                          ) : (
+                            <>
+                              <span className={player.active === false ? "muted" : ""}>{player.nickname}</span>
+                              <div style={{ display: "flex", gap: "0.35rem" }}>
+                                <button
+                                  className="btn btn-soft"
+                                  onClick={() => {
+                                    setEditingPlayerId(player.id);
+                                    setEditingNickname(player.nickname);
+                                  }}
+                                >
+                                  Editar
+                                </button>
+                                {player.active === false ? (
+                                  <button
+                                    className="btn btn-ok"
+                                    onClick={() =>
+                                      void apiAdmin(adminToken, `/players/${player.id}`, {
+                                        method: "PUT",
+                                        body: JSON.stringify({ active: true })
+                                      }).then(loadAdminData)
                                     }
                                   >
-                                    <option value="">Sin ganador</option>
-                                    <option value={match.pairAKey}>{match.pairALabel}</option>
-                                    <option value={match.pairBKey}>{match.pairBLabel}</option>
-                                  </select>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )) ?? <div className="text-slate-500">Sin zonas generadas.</div>}
-                      </div>
-                      {drawConflicts.length > 0 ? (
-                        <>
-                          <h4 className="mt-2 text-xs font-semibold text-rose-700">Conflictos del sorteo</h4>
-                          <ul className="space-y-1 text-xs text-rose-700">
-                            {drawConflicts.map((conflict) => (
-                              <li key={conflict}>- {conflict}</li>
-                            ))}
-                          </ul>
-                        </>
-                      ) : null}
-                      <h3 className="mb-1 mt-3 text-sm font-semibold text-slate-700">Cuadro eliminatorio</h3>
-                      <ul className="space-y-1 text-sm">
-                        {dateWorkspace?.bracket.map((match) => (
-                          <li key={match.id} className="rounded-lg bg-slate-50 px-2 py-1.5">
-                            R{match.round} M{match.position}
-                          </li>
-                        )) ?? <li className="text-slate-500">Sin cuadro generado.</li>}
-                      </ul>
-                    </div>
-                  </div>
-                </article>
-
-                <article className="rounded-2xl bg-white p-4 shadow-md md:col-span-2">
-                  <h2 className="mb-2 text-lg font-semibold text-slate-900">Jugadores</h2>
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    {players.map((player) => (
-                      <div key={player.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
-                        {player.nickname}
-                      </div>
-                    ))}
-                  </div>
-                  {adminError ? <small className="text-rose-600">{adminError}</small> : null}
-                </article>
-
-                <article className="rounded-2xl bg-white p-4 shadow-md md:col-span-2">
-                  <h2 className="mb-2 text-lg font-semibold text-slate-900">Carga manual de puntos (provisoria)</h2>
-                  <div className="grid gap-2 md:grid-cols-4">
-                    <select
-                      className="rounded-lg border border-slate-200 px-3 py-2"
-                      value={manualPointsPlayerId}
-                      onChange={(e) => setManualPointsPlayerId(e.target.value)}
-                    >
-                      <option value="">Jugador</option>
-                      {players.map((player) => (
-                        <option key={player.id} value={player.id}>
-                          {player.nickname}
-                        </option>
+                                    Activar
+                                  </button>
+                                ) : (
+                                  <button
+                                    className="btn btn-danger"
+                                    onClick={() =>
+                                      void apiAdmin(adminToken, `/players/${player.id}`, { method: "DELETE" }).then(
+                                        loadAdminData
+                                      )
+                                    }
+                                  >
+                                    Baja
+                                  </button>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </div>
                       ))}
-                    </select>
-                    <input
-                      className="rounded-lg border border-slate-200 px-3 py-2"
-                      type="number"
-                      placeholder="Puntos (+/-)"
-                      value={manualPointsValue}
-                      onChange={(e) => setManualPointsValue(e.target.value)}
-                    />
-                    <input
-                      className="rounded-lg border border-slate-200 px-3 py-2"
-                      placeholder="Motivo (ej: Historial fecha 1)"
-                      value={manualPointsReason}
-                      onChange={(e) => setManualPointsReason(e.target.value)}
-                    />
-                    <button className="rounded-lg bg-indigo-600 px-3 py-2 text-white" onClick={addManualPointsToBatch}>
-                      Agregar al lote
-                    </button>
-                  </div>
+                    </div>
+                  </section>
+                ) : null}
 
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    <div>
-                      <h3 className="mb-1 text-sm font-semibold text-slate-700">Lote pendiente</h3>
-                      <ul className="space-y-1 text-sm">
-                        {manualPointsBatch.map((item, index) => {
-                          const player = players.find((p) => p.id === item.playerId);
-                          return (
-                            <li key={`${item.playerId}-${item.points}-${index}`} className="flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1.5">
+                {adminSection === "historial" ? (
+                  <section className="panel">
+                    <h2>Historial de parejas</h2>
+                    <p className="panel-lead">Quiénes ya jugaron juntos (para no repetir).</p>
+                    <div className="grid-2">
+                      <div>
+                        <div className="field">
+                          <label>Jugador A</label>
+                          <select value={historyA} onChange={(e) => setHistoryA(e.target.value)}>
+                            <option value="">Elegir</option>
+                            {activePlayers.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.nickname}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="field">
+                          <label>Jugador B</label>
+                          <select value={historyB} onChange={(e) => setHistoryB(e.target.value)}>
+                            <option value="">Elegir</option>
+                            {activePlayers.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.nickname}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <button
+                          className="btn btn-ok"
+                          onClick={async () => {
+                            const result = await apiAdmin<HistoryResponse>(
+                              adminToken,
+                              `/players/${historyA}/partners-history/${historyB}`,
+                              { method: "POST" }
+                            );
+                            setHistoryMessage(result.message);
+                          }}
+                        >
+                          Agregar relación
+                        </button>
+                        {historyMessage ? <p className="msg">{historyMessage}</p> : null}
+                      </div>
+                      <div>
+                        <div className="field">
+                          <label>Ver historial de</label>
+                          <select
+                            value={historyLookupPlayer}
+                            onChange={(e) => setHistoryLookupPlayer(e.target.value)}
+                          >
+                            <option value="">Elegir</option>
+                            {activePlayers.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.nickname}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <button
+                          className="btn btn-primary"
+                          onClick={async () => {
+                            if (!historyLookupPlayer) return;
+                            setHistoryLookupResult(
+                              await apiAdmin<Player[]>(adminToken, `/players/${historyLookupPlayer}/partners-history`)
+                            );
+                          }}
+                        >
+                          Ver
+                        </button>
+                        <div className="stack" style={{ marginTop: "0.75rem" }}>
+                          {historyLookupResult.map((player) => (
+                            <div key={player.id} className="pair-row">
+                              <span>{player.nickname}</span>
+                              <button
+                                className="btn btn-danger"
+                                onClick={async () => {
+                                  await apiAdmin(
+                                    adminToken,
+                                    `/players/${historyLookupPlayer}/partners-history/${player.id}`,
+                                    { method: "DELETE" }
+                                  );
+                                  setHistoryLookupResult(
+                                    await apiAdmin<Player[]>(
+                                      adminToken,
+                                      `/players/${historyLookupPlayer}/partners-history`
+                                    )
+                                  );
+                                }}
+                              >
+                                Quitar
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                ) : null}
+
+                {adminSection === "puntos" ? (
+                  <section className="panel">
+                    <h2>Ajuste manual de puntos</h2>
+                    <p className="panel-lead">Solo para correcciones. Lo normal es cerrar la fecha y que sume solo.</p>
+                    <div className="grid-2">
+                      <div>
+                        <div className="field">
+                          <label>Jugador</label>
+                          <select value={manualPointsPlayerId} onChange={(e) => setManualPointsPlayerId(e.target.value)}>
+                            <option value="">Elegir</option>
+                            {activePlayers.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.nickname}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="field">
+                          <label>Puntos (+/-)</label>
+                          <input
+                            type="number"
+                            value={manualPointsValue}
+                            onChange={(e) => setManualPointsValue(e.target.value)}
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Motivo</label>
+                          <input value={manualPointsReason} onChange={(e) => setManualPointsReason(e.target.value)} />
+                        </div>
+                        <button
+                          className="btn btn-soft"
+                          onClick={() => {
+                            if (!manualPointsPlayerId || !manualPointsValue || !manualPointsReason.trim()) return;
+                            setManualPointsBatch((prev) => [
+                              ...prev,
+                              {
+                                playerId: Number(manualPointsPlayerId),
+                                points: Number(manualPointsValue),
+                                reason: manualPointsReason.trim()
+                              }
+                            ]);
+                            setManualPointsPlayerId("");
+                            setManualPointsValue("");
+                            setManualPointsReason("");
+                          }}
+                        >
+                          Agregar al lote
+                        </button>
+                        <button
+                          className="btn btn-warn"
+                          style={{ marginTop: "0.5rem" }}
+                          onClick={async () => {
+                            if (manualPointsBatch.length === 0) return;
+                            await apiAdmin(adminToken, "/ranking/manual-adjustments", {
+                              method: "POST",
+                              body: JSON.stringify({ items: manualPointsBatch })
+                            });
+                            setManualPointsBatch([]);
+                            await Promise.all([
+                              loadPublicData(),
+                              apiAdmin<LedgerEntry[]>(adminToken, "/ranking/ledger").then(setLedger)
+                            ]);
+                          }}
+                        >
+                          Confirmar lote
+                        </button>
+                        <ul className="stack" style={{ marginTop: "0.75rem" }}>
+                          {manualPointsBatch.map((item, index) => (
+                            <li key={`${item.playerId}-${index}`} className="pair-row">
                               <span>
-                                {player?.nickname ?? `#${item.playerId}`}: {item.points} pts ({item.reason})
+                                {players.find((p) => p.id === item.playerId)?.nickname}: {item.points}
                               </span>
-                              <button className="text-rose-600" onClick={() => removeManualPointsFromBatch(index)}>
+                              <button
+                                className="btn btn-danger"
+                                onClick={() => setManualPointsBatch((prev) => prev.filter((_, i) => i !== index))}
+                              >
                                 Quitar
                               </button>
                             </li>
-                          );
-                        })}
-                      </ul>
-                      <button className="mt-2 rounded-lg bg-emerald-600 px-3 py-2 text-white" onClick={() => void submitManualPointsBatch()}>
-                        Confirmar carga manual
-                      </button>
+                          ))}
+                        </ul>
+                      </div>
+                      <div>
+                        <h3>Últimos movimientos</h3>
+                        <div className="stack" style={{ marginTop: "0.5rem", maxHeight: 320, overflow: "auto" }}>
+                          {ledger.map((entry) => (
+                            <div key={entry.id} className="pair-row" style={{ display: "block" }}>
+                              <strong>{entry.player.nickname}</strong>: {entry.points} · {entry.reason}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                ) : null}
+
+                {adminSection === "fecha" ? (
+                  <section className="panel">
+                    <h2>Fecha de hoy</h2>
+                    <p className="panel-lead">Seguí los pasos. No hace falta tocar todo a la vez.</p>
+
+                    <div className="grid-2">
+                      <div className="field">
+                        <label>Nombre de la fecha</label>
+                        <input
+                          placeholder="Ej: Fecha 1"
+                          value={newDateName}
+                          onChange={(e) => setNewDateName(e.target.value)}
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Día</label>
+                        <input type="date" value={newDateValue} onChange={(e) => setNewDateValue(e.target.value)} />
+                      </div>
+                    </div>
+                    <button className="btn btn-primary" onClick={() => void createTournamentDate()}>
+                      Crear fecha nueva
+                    </button>
+
+                    <div className="field" style={{ marginTop: "1rem" }}>
+                      <label>O elegir una fecha ya creada</label>
+                      <select
+                        value={selectedDateId ?? ""}
+                        onChange={(e) => {
+                          setSelectedDateId(Number(e.target.value));
+                          setDateStep(1);
+                        }}
+                      >
+                        <option value="">Elegir</option>
+                        {dates.map((date) => (
+                          <option key={date.id} value={date.id}>
+                            {date.name} · {formatEventDate(date.eventDate)} ({date.status})
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
-                    <div>
-                      <h3 className="mb-1 text-sm font-semibold text-slate-700">Historial reciente de puntos</h3>
-                      <ul className="max-h-64 space-y-1 overflow-auto text-sm">
-                        {ledger.map((entry) => (
-                          <li key={entry.id} className="rounded-lg bg-slate-50 px-2 py-1.5">
-                            <span className="font-medium">{entry.player.nickname}</span>: {entry.points} pts - {entry.reason}
-                          </li>
-                        ))}
-                      </ul>
+                    {dateWorkspace ? (
+                      <p
+                        className={`status-pill ${
+                          dateWorkspace.locked
+                            ? "status-lock"
+                            : dateWorkspace.date.status === "CLOSED"
+                              ? "status-edit"
+                              : "status-open"
+                        }`}
+                      >
+                        {dateWorkspace.locked
+                          ? "Bloqueada"
+                          : dateWorkspace.date.status === "CLOSED"
+                            ? `Cerrada · editable hasta ${
+                                dateWorkspace.editableUntil
+                                  ? new Date(dateWorkspace.editableUntil).toLocaleString()
+                                  : "-"
+                              }`
+                            : "Abierta"}
+                      </p>
+                    ) : null}
+
+                    <div className="steps" role="tablist" aria-label="Pasos de la fecha">
+                      {DATE_STEPS.map((step) => (
+                        <button
+                          key={step.id}
+                          type="button"
+                          className={`step-chip ${dateStep === step.id ? "is-active" : ""} ${
+                            dateStep > step.id ? "is-done" : ""
+                          }`}
+                          onClick={() => setDateStep(step.id)}
+                        >
+                          {step.label}
+                        </button>
+                      ))}
                     </div>
-                  </div>
-                </article>
-              </section>
+
+                    {dateStep === 1 ? (
+                      <div>
+                        <h3>¿Quiénes juegan hoy?</h3>
+                        <p className="muted">Marcá a los presentes. Tiene que ser cantidad par.</p>
+                        <div className="list-check" style={{ marginTop: "0.75rem" }}>
+                          {activePlayers.map((player) => (
+                            <label key={player.id}>
+                              <input
+                                type="checkbox"
+                                checked={attendeeIds.includes(player.id)}
+                                disabled={dateLocked}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setAttendeeIds((prev) => [...new Set([...prev, player.id])]);
+                                  } else {
+                                    setAttendeeIds((prev) => prev.filter((id) => id !== player.id));
+                                  }
+                                }}
+                              />
+                              {player.nickname}
+                            </label>
+                          ))}
+                        </div>
+                        <p className="muted" style={{ marginTop: "0.5rem" }}>
+                          Seleccionados: {attendeeIds.length}
+                        </p>
+                        <button className="btn btn-primary" disabled={dateLocked} onClick={() => void saveRegistrations()}>
+                          Guardar y seguir
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {dateStep === 2 ? (
+                      <div className="stack">
+                        <div>
+                          <h3>Armar parejas</h3>
+                          <p className="muted">
+                            Un botón prepara las cabezas y sortea respetando historial y restricciones.
+                          </p>
+                          <button className="btn btn-ok" disabled={dateLocked} onClick={() => void prepareAndDraw()}>
+                            Preparar cabezas y sortear
+                          </button>
+                          {seedModeMessage ? <p className="msg">{seedModeMessage}</p> : null}
+                          {dateWorkspace?.seeds.length ? (
+                            <p className="muted">Cabezas: {dateWorkspace.seeds.map((s) => s.nickname).join(", ")}</p>
+                          ) : null}
+                        </div>
+
+                        <div>
+                          <h4>Parejas</h4>
+                          <div className="stack" style={{ marginTop: "0.5rem" }}>
+                            {dateWorkspace?.draw?.pairs.map((pair) => (
+                              <div key={pair.id} className="pair-row">
+                                {pair.player1Nickname} + {pair.player2Nickname}
+                              </div>
+                            )) ?? <p className="muted">Todavía no hay sorteo.</p>}
+                          </div>
+                          {drawConflicts.length > 0 ? (
+                            <p className="msg msg-error">{drawConflicts.join(" · ")}</p>
+                          ) : null}
+                        </div>
+
+                        <details>
+                          <summary>¿Hace falta corregir a mano?</summary>
+                          <div className="stack" style={{ marginTop: "0.75rem" }}>
+                            <div className="grid-2">
+                              <select
+                                className="control"
+                                value={manualPairA}
+                                disabled={dateLocked}
+                                onChange={(e) => setManualPairA(e.target.value)}
+                              >
+                                <option value="">Jugador 1</option>
+                                {activePlayers.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.nickname}
+                                  </option>
+                                ))}
+                              </select>
+                              <select
+                                className="control"
+                                value={manualPairB}
+                                disabled={dateLocked}
+                                onChange={(e) => setManualPairB(e.target.value)}
+                              >
+                                <option value="">Jugador 2</option>
+                                {activePlayers.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.nickname}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <button
+                              className="btn btn-soft"
+                              disabled={dateLocked}
+                              onClick={() => {
+                                if (!manualPairA || !manualPairB) return;
+                                const p1 = Number(manualPairA);
+                                const p2 = Number(manualPairB);
+                                if (p1 === p2) return;
+                                setManualPairs((prev) => [...prev, { player1: p1, player2: p2 }]);
+                                setManualPairA("");
+                                setManualPairB("");
+                              }}
+                            >
+                              Agregar pareja
+                            </button>
+                            {manualPairs.map((pair, index) => (
+                              <div key={`${pair.player1}-${pair.player2}-${index}`} className="pair-row">
+                                <span>
+                                  {players.find((p) => p.id === pair.player1)?.nickname} +{" "}
+                                  {players.find((p) => p.id === pair.player2)?.nickname}
+                                </span>
+                                <button
+                                  className="btn btn-danger"
+                                  disabled={dateLocked}
+                                  onClick={() => setManualPairs((prev) => prev.filter((_, i) => i !== index))}
+                                >
+                                  Quitar
+                                </button>
+                              </div>
+                            ))}
+                            <button className="btn btn-warn" disabled={dateLocked} onClick={() => void confirmManualDraw()}>
+                              Confirmar ajuste manual
+                            </button>
+                          </div>
+                        </details>
+
+                        <button className="btn btn-primary" disabled={dateLocked} onClick={() => void generateZones()}>
+                          Generar zonas y seguir
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {dateStep === 3 ? (
+                      <div className="stack">
+                        <h3>Resultados de zona</h3>
+                        <p className="muted">
+                          Escribí el marcador (ej: 6-2) y elegí el ganador. Se guarda solo. Clasifican hasta 3
+                          parejas: el 1º pasa directo; 2º y 3º juegan entre zonas en la ronda previa del cuadro.
+                        </p>
+                        {dateWorkspace?.zonesComputed?.map((zone) => (
+                          <div key={zone.id} className="zone-block">
+                            <h3>
+                              {zone.name} ·{" "}
+                              {zone.qualifiers.length
+                                ? zone.qualifiers
+                                    .map((q) => `${q.place ?? "?"}º ${q.label}`)
+                                    .join(" · ")
+                                : "sin clasificación aún"}
+                            </h3>
+                            <div className="stack" style={{ marginBottom: "0.75rem" }}>
+                              {zone.pairs.map((pair, idx) => (
+                                <div key={pair.key} className="pair-row">
+                                  <span>
+                                    {idx + 1}. {pair.label}
+                                  </span>
+                                  <span className="muted">{pair.wins}G</span>
+                                </div>
+                              ))}
+                            </div>
+                            {zone.matches.map((match) => (
+                              <div key={match.id} className="match-editor">
+                                <div className="teams">
+                                  {match.pairALabel} vs {match.pairBLabel}
+                                </div>
+                                <ScoreInput
+                                  className="control"
+                                  placeholder="Ej: 6-2"
+                                  disabled={dateLocked}
+                                  value={zoneScores[match.id] ?? match.score ?? ""}
+                                  onChange={(next) => setZoneScores((prev) => ({ ...prev, [match.id]: next }))}
+                                  onCompleteBlur={(complete) => {
+                                    if (!match.winnerPairKey) return;
+                                    void updateZoneMatch(match.id, match.winnerPairKey, complete);
+                                  }}
+                                />
+                                <select
+                                  className="control"
+                                  disabled={dateLocked}
+                                  value={match.winnerPairKey ?? ""}
+                                  onChange={(e) => {
+                                    const winner = e.target.value ? e.target.value : null;
+                                    const score = zoneScores[match.id] ?? match.score ?? "";
+                                    if (winner && !isValidSetScore(score)) {
+                                      setDateMessage("Antes elegí un marcador válido (ej: 6-2 o 7-6).");
+                                      return;
+                                    }
+                                    void updateZoneMatch(match.id, winner, score);
+                                  }}
+                                >
+                                  <option value="">Elegir ganador</option>
+                                  <option value={match.pairAKey}>{match.pairALabel}</option>
+                                  <option value={match.pairBKey}>{match.pairBLabel}</option>
+                                </select>
+                              </div>
+                            ))}
+                          </div>
+                        )) ?? <p className="muted">Todavía no hay zonas.</p>}
+                        <button className="btn btn-primary" disabled={dateLocked} onClick={() => void generateBracket()}>
+                          Armar cuadro eliminatorio
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {dateStep === 4 ? (
+                      <div className="stack">
+                        <h3>Cuadro eliminatorio</h3>
+                        <p className="muted">
+                          En la primera ronda: los 1º de zona avanzan con bye; los 2º enfrentan a 3º de otra zona.
+                          Completá marcador y ganador: el ganador avanza solo.
+                        </p>
+                        <TournamentBracket
+                          matches={dateWorkspace?.bracket ?? []}
+                          editable
+                          locked={dateLocked}
+                          scores={bracketScores}
+                          onScoreChange={(matchId, score) =>
+                            setBracketScores((prev) => ({ ...prev, [matchId]: score }))
+                          }
+                          onResultChange={(matchId, winnerPairKey, score) =>
+                            void updateBracketMatch(matchId, winnerPairKey, score)
+                          }
+                        />
+                        <button className="btn btn-soft" onClick={() => setDateStep(5)}>
+                          Ir a cerrar fecha
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {dateStep === 5 ? (
+                      <div className="stack">
+                        <h3>Cerrar fecha</h3>
+                        <p className="muted">
+                          Al cerrar se suman los puntos solos y se guarda el historial de parejas. La{" "}
+                          <strong>primera fecha</strong> de la temporada suma <strong>doble</strong>. Después tenés 24
+                          hs para corregir.
+                        </p>
+                        {!showCloseConfirm ? (
+                          <button
+                            className="btn btn-danger"
+                            disabled={dateLocked}
+                            onClick={() => setShowCloseConfirm(true)}
+                          >
+                            Cerrar fecha y sumar puntos
+                          </button>
+                        ) : (
+                          <div className="confirm-box">
+                            <p>
+                              <strong>¿Seguro que querés cerrar esta fecha?</strong>
+                            </p>
+                            <p className="muted">
+                              Se van a sumar los puntos del cuadro y se guardará el historial de parejas.
+                            </p>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+                              <button
+                                className="btn btn-danger"
+                                disabled={dateLocked}
+                                onClick={() => {
+                                  setShowCloseConfirm(false);
+                                  void closeDate();
+                                }}
+                              >
+                                Sí, cerrar y sumar puntos
+                              </button>
+                              <button className="btn btn-soft" onClick={() => setShowCloseConfirm(false)}>
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+
+                    {dateMessage ? <p className="msg">{dateMessage}</p> : null}
+                    {adminError ? <p className="msg msg-error">{adminError}</p> : null}
+                  </section>
+                ) : null}
+              </div>
             )
           }
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </main>
+    </div>
   );
 }
 

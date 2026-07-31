@@ -10,6 +10,12 @@
   "scripts": {
     "dev:web": "npm run dev -w web",
     "dev:api": "npm run dev -w api",
+    "dev": "npm run dev:api & npm run dev:web",
+    "backup": "npm run backup -w api",
+    "reset:data": "npm run reset:data -w api",
+    "reset:tournament": "npm run reset:data -w api",
+    "reset:all": "npm run reset:all -w api",
+    "restore:players": "npm run restore:players -w api",
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"

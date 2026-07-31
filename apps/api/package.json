@@ -13,7 +13,10 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:status": "prisma migrate status",
-    "backup": "tsx scripts/backup.ts"
+    "backup": "tsx scripts/backup.ts",
+    "reset:data": "tsx scripts/reset-data.ts --tournament",
+    "reset:all": "tsx scripts/reset-data.ts",
+    "restore:players": "tsx scripts/restore-players.ts"
   },
   "keywords": [],
   "author": "",
