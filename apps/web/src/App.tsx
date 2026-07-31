@@ -277,12 +277,12 @@ function App() {
       const seeds = await apiAdmin<{
         mode: "random" | "ranking";
         zoneCount: number;
-        seeds: Array<{ nickname: string }>;
+        seeds: Array<{ nickname: string; rank: number; zoneName: string }>;
       }>(adminToken!, `/dates/${selectedDateId}/seeds/auto`, { method: "POST" });
       setSeedModeMessage(
         seeds.mode === "random"
-          ? `Primera fecha: ${seeds.zoneCount} cabezas al azar.`
-          : `Cabezas = top ${seeds.zoneCount} del ranking.`
+          ? `Primera fecha: ${seeds.zoneCount} cabezas al azar (ubicadas en extremos opuestos).`
+          : `Cabezas = top ${seeds.zoneCount} del ranking (ubicadas en extremos opuestos).`
       );
       const draw = await apiAdmin<{ conflicts: string[] }>(adminToken!, `/dates/${selectedDateId}/draw/generate`, {
         method: "POST"
@@ -290,7 +290,9 @@ function App() {
       setDrawConflicts(draw.conflicts);
       await refreshWorkspace(selectedDateId);
       await loadAdminData();
-      setDateMessage(`Parejas armadas. Cabezas: ${seeds.seeds.map((s) => s.nickname).join(", ")}`);
+      setDateMessage(
+        `Parejas armadas. ${seeds.seeds.map((s) => `#${s.rank} ${s.nickname} → ${s.zoneName}`).join(" · ")}`
+      );
     } catch (error) {
       setDateMessage(error instanceof Error ? error.message : "No se pudieron armar las parejas");
     }
@@ -1086,7 +1088,16 @@ function App() {
                           </button>
                           {seedModeMessage ? <p className="msg">{seedModeMessage}</p> : null}
                           {dateWorkspace?.seeds.length ? (
-                            <p className="muted">Cabezas: {dateWorkspace.seeds.map((s) => s.nickname).join(", ")}</p>
+                            <p className="muted">
+                              Cabezas:{" "}
+                              {dateWorkspace.seeds
+                                .map((s) =>
+                                  s.rank && s.zoneName
+                                    ? `#${s.rank} ${s.nickname} → ${s.zoneName}`
+                                    : s.nickname
+                                )
+                                .join(" · ")}
+                            </p>
                           ) : null}
                         </div>
 

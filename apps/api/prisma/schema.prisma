@@ -84,10 +84,13 @@ model DateSeed {
   id       Int @id @default(autoincrement())
   dateId   Int
   playerId Int
+  /// 1 = mejor cabeza (#1 ranking / primera del sorteo random).
+  rank     Int @default(1)
 
   date TournamentDate @relation(fields: [dateId], references: [id], onDelete: Cascade)
 
   @@unique([dateId, playerId])
+  @@index([dateId, rank])
 }
 
 model Zone {

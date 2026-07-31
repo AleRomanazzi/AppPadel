@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { seedRankByZoneIndex, zoneIndexBySeedRank } from "./seedPlacement.js";
 
 /** Mirror of buildZoneSizes logic for unit testing without booting Express. */
 const buildZoneSizes = (pairCount: number): number[] => {
@@ -32,5 +33,19 @@ describe("buildZoneSizes max 3", () => {
       expect(sizes.reduce((a, b) => a + b, 0)).toBe(n);
       expect(Math.max(...sizes)).toBeLessThanOrEqual(3);
     }
+  });
+});
+
+describe("seedPlacement opposite ends", () => {
+  it("places #1 in A and #2 in D for 4 zones (12 pairs)", () => {
+    // zone index → seed rank (0-based)
+    expect(seedRankByZoneIndex(4)).toEqual([0, 2, 3, 1]);
+    // seed rank → zone: #1→A(0), #2→D(3), #3→B(1), #4→C(2)
+    expect(zoneIndexBySeedRank(4)).toEqual([0, 3, 1, 2]);
+  });
+
+  it("places #1 in A and #2 in last zone for 2 and 3 zones", () => {
+    expect(seedRankByZoneIndex(2)).toEqual([0, 1]);
+    expect(seedRankByZoneIndex(3)).toEqual([0, 2, 1]);
   });
 });

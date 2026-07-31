@@ -6,6 +6,7 @@ import { Prisma, type TournamentDate } from "@prisma/client";
 import { prisma } from "./db.js";
 import { generatePairs, normalizePair, pairKey, validatePair } from "./pairing.js";
 import { scoreDiffForPair, isValidSetScore } from "./score.js";
+import { zoneIndexBySeedRank } from "./seedPlacement.js";
 
 type Stage = "OCTAVOS" | "CUARTOS" | "SEMIS" | "SUBCAMPEON" | "CAMPEON";
 const STAGE_POINTS: Record<Stage, number> = {
@@ -591,7 +592,11 @@ app.post("/dates/:id/seeds", requireAdmin, async (req, res) => {
     const body = req.body as { playerIds: number[] };
     await prisma.dateSeed.deleteMany({ where: { dateId } });
     await prisma.dateSeed.createMany({
-      data: body.playerIds.map((playerId) => ({ dateId, playerId }))
+      data: body.playerIds.map((playerId, index) => ({
+        dateId,
+        playerId,
+        rank: index + 1
+      }))
     });
     res.status(201).json({ ok: true });
   } catch (error) {
@@ -643,19 +648,28 @@ app.post("/dates/:id/seeds/auto", requireAdmin, async (req, res) => {
 
     await prisma.$transaction([
       prisma.dateSeed.deleteMany({ where: { dateId } }),
-      prisma.dateSeed.createMany({ data: seedIds.map((playerId) => ({ dateId, playerId })) }),
+      prisma.dateSeed.createMany({
+        data: seedIds.map((playerId, index) => ({
+          dateId,
+          playerId,
+          rank: index + 1
+        }))
+      }),
       prisma.blacklistedPlayer.deleteMany({}),
       prisma.blacklistedPlayer.createMany({ data: seedIds.map((playerId) => ({ playerId })) })
     ]);
 
     const playersById = new Map(attendees.map((p) => [p.id, p.nickname]));
+    const zoneByRank = zoneIndexBySeedRank(n);
     res.status(201).json({
       mode,
       zoneCount: n,
       zoneSizes,
-      seeds: seedIds.map((playerId) => ({
+      seeds: seedIds.map((playerId, index) => ({
         playerId,
-        nickname: playersById.get(playerId) ?? `#${playerId}`
+        nickname: playersById.get(playerId) ?? `#${playerId}`,
+        rank: index + 1,
+        zoneName: `Zona ${String.fromCharCode(65 + zoneByRank[index])}`
       }))
     });
   } catch (error) {
@@ -757,8 +771,12 @@ app.post("/dates/:id/zones/generate", requireAdmin, async (req, res) => {
       return;
     }
 
-    const seeds = await prisma.dateSeed.findMany({ where: { dateId } });
+    const seeds = await prisma.dateSeed.findMany({
+      where: { dateId },
+      orderBy: [{ rank: "asc" }, { id: "asc" }]
+    });
     const seedIds = new Set(seeds.map((s) => s.playerId));
+    const seedRankByPlayer = new Map(seeds.map((s) => [s.playerId, s.rank]));
     const blacklistedIds = seedIds.size > 0 ? seedIds : new Set(
       (await prisma.blacklistedPlayer.findMany({ select: { playerId: true } })).map((i) => i.playerId)
     );
@@ -768,6 +786,7 @@ app.post("/dates/:id/zones/generate", requireAdmin, async (req, res) => {
       player1: number;
       player2: number;
       seedPlayerId: number | null;
+      seedRank: number | null;
       hasBlacklist: boolean;
     };
 
@@ -782,6 +801,7 @@ app.post("/dates/:id/zones/generate", requireAdmin, async (req, res) => {
         player1: pair.player1,
         player2: pair.player2,
         seedPlayerId,
+        seedRank: seedPlayerId != null ? (seedRankByPlayer.get(seedPlayerId) ?? null) : null,
         hasBlacklist: blacklistedIds.has(pair.player1) || blacklistedIds.has(pair.player2)
       };
     });
@@ -793,10 +813,19 @@ app.post("/dates/:id/zones/generate", requireAdmin, async (req, res) => {
       pairs: [] as ZonePair[]
     }));
 
-    // One seed head per zone
-    const seedPairs = shuffle(pairs.filter((pair) => pair.seedPlayerId != null));
-    zones.forEach((zone, index) => {
-      if (seedPairs[index]) zone.pairs.push(seedPairs[index]);
+    // Cabezas: #1→A, #2→última, #3→B, #4→penúltima... (también en fecha 1 random).
+    const orderedSeedPairs = pairs
+      .filter((pair) => pair.seedPlayerId != null)
+      .sort((a, b) => {
+        const rankA = a.seedRank ?? Number.MAX_SAFE_INTEGER;
+        const rankB = b.seedRank ?? Number.MAX_SAFE_INTEGER;
+        if (rankA !== rankB) return rankA - rankB;
+        return a.seedPlayerId! - b.seedPlayerId!;
+      });
+    const zoneByRank = zoneIndexBySeedRank(zones.length);
+    orderedSeedPairs.forEach((pair, index) => {
+      const zoneIndex = zoneByRank[index] ?? index;
+      if (zones[zoneIndex]) zones[zoneIndex].pairs.push(pair);
     });
 
     const seededKeys = new Set(zones.flatMap((zone) => zone.pairs.map((pair) => pair.key)));
@@ -1232,7 +1261,8 @@ app.get("/dates/:id/workspace", requireAdmin, async (req, res) => {
       include: { player: { select: { id: true, nickname: true } } }
     }),
     prisma.dateSeed.findMany({
-      where: { dateId }
+      where: { dateId },
+      orderBy: [{ rank: "asc" }, { id: "asc" }]
     }),
     prisma.dateDraw.findFirst({
       where: { dateId },
@@ -1274,10 +1304,15 @@ app.get("/dates/:id/workspace", requireAdmin, async (req, res) => {
     locked: isDateLocked(date),
     editableUntil: editableUntil(date),
     registrations: registrations.map((item) => item.player),
-    seeds: seeds.map((seed) => ({
-      playerId: seed.playerId,
-      nickname: playersById.get(seed.playerId) ?? `#${seed.playerId}`
-    })),
+    seeds: (() => {
+      const zoneByRank = zoneIndexBySeedRank(seeds.length);
+      return seeds.map((seed, index) => ({
+        playerId: seed.playerId,
+        nickname: playersById.get(seed.playerId) ?? `#${seed.playerId}`,
+        rank: seed.rank,
+        zoneName: `Zona ${String.fromCharCode(65 + (zoneByRank[index] ?? index))}`
+      }));
+    })(),
     draw: draw ? { ...draw, pairs: pairsWithNames } : null,
     zones,
     bracket: bracketWithNames,

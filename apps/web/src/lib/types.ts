@@ -67,7 +67,7 @@ export type DateWorkspace = {
   locked: boolean;
   editableUntil: string | null;
   registrations: Player[];
-  seeds: Array<{ playerId: number; nickname: string }>;
+  seeds: Array<{ playerId: number; nickname: string; rank?: number; zoneName?: string }>;
   draw: { id: number; status: string; pairs: DrawPairView[] } | null;
   zones: Array<{ id: number; name: string; size: number }>;
   bracket: BracketMatch[];
