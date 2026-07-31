@@ -16,7 +16,11 @@ const STAGE_POINTS = {
 const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const app = express();
 app.use(helmet());
-app.use(cors());
+const corsOrigins = (process.env.CORS_ORIGIN ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+app.use(cors(corsOrigins.length > 0 ? { origin: corsOrigins } : undefined));
 app.use(express.json());
 const port = Number(process.env.PORT ?? 4000);
 const ADMIN_USERNAME = "admin";
@@ -424,6 +428,25 @@ app.post("/dates", requireAdmin, async (req, res) => {
         data: { name, eventDate, status: "OPEN" }
     });
     res.status(201).json(created);
+});
+app.delete("/dates/:id", requireAdmin, async (req, res) => {
+    const dateId = Number(req.params.id);
+    if (!Number.isFinite(dateId)) {
+        res.status(400).json({ error: "ID de fecha inválido." });
+        return;
+    }
+    const date = await prisma.tournamentDate.findUnique({ where: { id: dateId } });
+    if (!date) {
+        res.status(404).json({ error: "Fecha no encontrada." });
+        return;
+    }
+    await prisma.$transaction(async (tx) => {
+        await tx.rankingPointEntry.deleteMany({ where: { dateId } });
+        await tx.partnerHistory.deleteMany({ where: { dateId } });
+        // El resto (sorteos, zonas, cuadro, inscripciones, seeds) cae por cascade.
+        await tx.tournamentDate.delete({ where: { id: dateId } });
+    });
+    res.status(204).send();
 });
 app.post("/dates/:id/registrations", requireAdmin, async (req, res) => {
     try {

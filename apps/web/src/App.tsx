@@ -44,6 +44,7 @@ function App() {
   const [adminSection, setAdminSection] = useState<AdminSection>("fecha");
   const [dateStep, setDateStep] = useState<DateStep>(1);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [players, setPlayers] = useState<Player[]>([]);
@@ -378,6 +379,32 @@ function App() {
       setDateStep(5);
     } catch (error) {
       setDateMessage(error instanceof Error ? error.message : "No se pudo cerrar la fecha");
+    }
+  };
+
+  const deleteDate = async () => {
+    if (!selectedDateId) return;
+    const deletingId = selectedDateId;
+    try {
+      await apiAdmin(adminToken!, `/dates/${deletingId}`, { method: "DELETE" });
+      setShowDeleteConfirm(false);
+      setDateWorkspace(null);
+      setAttendeeIds([]);
+      setManualPairs([]);
+      setZoneScores({});
+      setBracketScores({});
+      setSeedModeMessage("");
+      setDrawConflicts([]);
+      setDateStep(1);
+      await Promise.all([loadAdminData(), loadPublicData()]);
+      const remaining = await apiAdmin<TournamentDate[]>(adminToken!, "/dates");
+      setDates(remaining);
+      const nextId = remaining[0]?.id ?? null;
+      setSelectedDateId(nextId);
+      if (publicDateId === deletingId) setPublicDateId(nextId);
+      setDateMessage("Fecha eliminada (puntos y partidos de esa fecha también). Los jugadores se mantienen.");
+    } catch (error) {
+      setDateMessage(error instanceof Error ? error.message : "No se pudo eliminar la fecha");
     }
   };
 
@@ -936,6 +963,7 @@ function App() {
                         onChange={(e) => {
                           setSelectedDateId(Number(e.target.value));
                           setDateStep(1);
+                          setShowDeleteConfirm(false);
                         }}
                       >
                         <option value="">Elegir</option>
@@ -946,6 +974,36 @@ function App() {
                         ))}
                       </select>
                     </div>
+
+                    {selectedDateId ? (
+                      !showDeleteConfirm ? (
+                        <button
+                          className="btn btn-danger"
+                          style={{ marginTop: "0.5rem" }}
+                          onClick={() => setShowDeleteConfirm(true)}
+                        >
+                          Eliminar esta fecha
+                        </button>
+                      ) : (
+                        <div className="confirm-box" style={{ marginTop: "0.75rem" }}>
+                          <p>
+                            <strong>¿Eliminar esta fecha por completo?</strong>
+                          </p>
+                          <p className="muted">
+                            Se borran sorteo, zonas, cuadro y puntos de esta fecha. Los jugadores del sistema se
+                            mantienen.
+                          </p>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+                            <button className="btn btn-danger" onClick={() => void deleteDate()}>
+                              Sí, eliminar fecha
+                            </button>
+                            <button className="btn btn-soft" onClick={() => setShowDeleteConfirm(false)}>
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    ) : null}
 
                     {dateWorkspace ? (
                       <p
