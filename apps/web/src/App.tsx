@@ -683,7 +683,7 @@ function App() {
                           {editingPlayerId === player.id ? (
                             <div style={{ display: "grid", gap: "0.4rem", width: "100%" }}>
                               <input value={editingNickname} onChange={(e) => setEditingNickname(e.target.value)} />
-                              <div style={{ display: "flex", gap: "0.4rem" }}>
+                              <div className="btn-row">
                                 <button className="btn btn-ok" onClick={() => void savePlayerEdit()}>
                                   Guardar
                                 </button>
@@ -695,7 +695,7 @@ function App() {
                           ) : (
                             <>
                               <span className={player.active === false ? "muted" : ""}>{player.nickname}</span>
-                              <div style={{ display: "flex", gap: "0.35rem" }}>
+                              <div className="btn-row">
                                 <button
                                   className="btn btn-soft"
                                   onClick={() => {
@@ -993,7 +993,7 @@ function App() {
                             Se borran sorteo, zonas, cuadro y puntos de esta fecha. Los jugadores del sistema se
                             mantienen.
                           </p>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+                          <div className="btn-row">
                             <button className="btn btn-danger" onClick={() => void deleteDate()}>
                               Sí, eliminar fecha
                             </button>
@@ -1297,7 +1297,7 @@ function App() {
                             <p className="muted">
                               Se van a sumar los puntos del cuadro y se guardará el historial de parejas.
                             </p>
-                            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+                            <div className="btn-row">
                               <button
                                 className="btn btn-danger"
                                 disabled={dateLocked}
