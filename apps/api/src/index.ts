@@ -3,19 +3,20 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import { Prisma, type TournamentDate } from "@prisma/client";
+import { STAGE_POINTS, type Stage } from "@apppadel/shared";
 import { prisma } from "./db.js";
 import { generatePairs, normalizePair, pairKey, validatePair } from "./pairing.js";
 import { scoreDiffForPair, isValidSetScore } from "./score.js";
 import { zoneIndexBySeedRank } from "./seedPlacement.js";
-
-type Stage = "OCTAVOS" | "CUARTOS" | "SEMIS" | "SUBCAMPEON" | "CAMPEON";
-const STAGE_POINTS: Record<Stage, number> = {
-  OCTAVOS: 15,
-  CUARTOS: 25,
-  SEMIS: 50,
-  SUBCAMPEON: 75,
-  CAMPEON: 100
-};
+import { buildZoneSizes, qualifierCountForZoneSize } from "./zoneLayout.js";
+import {
+  getBracketTemplate,
+  hasBracketTemplate,
+  qualifierKey,
+  resolveRound1Matchups,
+  type ResolvedPair
+} from "./bracketTemplates.js";
+import { computeStageAssignments } from "./stages.js";
 
 const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -108,12 +109,6 @@ const getConstraints = async () => {
   };
 };
 
-const nextPowerOfTwo = (value: number): number => {
-  let power = 1;
-  while (power < value) power *= 2;
-  return power;
-};
-
 const shuffle = <T,>(items: T[]): T[] => {
   const clone = [...items];
   for (let i = clone.length - 1; i > 0; i -= 1) {
@@ -121,16 +116,6 @@ const shuffle = <T,>(items: T[]): T[] => {
     [clone[i], clone[j]] = [clone[j], clone[i]];
   }
   return clone;
-};
-
-const buildZoneSizes = (pairCount: number): number[] => {
-  if (pairCount <= 0) return [];
-  // Max 3 pairs per zone. Remainder 1 or 2 only when not multiple of 3.
-  const zonesOf3 = Math.floor(pairCount / 3);
-  const remainder = pairCount % 3;
-  const sizes = Array.from({ length: zonesOf3 }, () => 3);
-  if (remainder > 0) sizes.push(remainder);
-  return sizes;
 };
 
 const getRankingScores = async (): Promise<Map<number, number>> => {
@@ -259,8 +244,10 @@ const buildZonesComputed = async (dateId: number): Promise<ZoneComputed[]> => {
       name: zone.name,
       pairs: sortedPairs,
       matches: normalizedMatches,
-      // Hasta 3 parejas por zona clasifican (1º directo, 2º y 3º a instancia previa).
-      qualifiers: sortedPairs.slice(0, Math.min(3, sortedPairs.length)).map((pair, index) => ({
+      // Clasifican hasta 3 (o 4 si la zona es de 4, p.ej. 16 parejas).
+      qualifiers: sortedPairs
+        .slice(0, qualifierCountForZoneSize(zone.size, sortedPairs.length))
+        .map((pair, index) => ({
         key: pair.key,
         label: pair.label,
         player1: pair.player1,
@@ -283,66 +270,6 @@ const pairLabel = (
 const bracketPairKey = (p1: number | null, p2: number | null): string | null => {
   if (p1 == null || p2 == null) return null;
   return pairKey(p1, p2);
-};
-
-const stageForLostRound = (round: number, maxRound: number): Stage => {
-  const fromFinal = maxRound - round;
-  if (fromFinal <= 1) return "SEMIS";
-  if (fromFinal === 2) return "CUARTOS";
-  return "OCTAVOS";
-};
-
-const computeStageAssignments = (
-  matches: Array<{
-    round: number;
-    pairAPlayer1: number | null;
-    pairAPlayer2: number | null;
-    pairBPlayer1: number | null;
-    pairBPlayer2: number | null;
-    winnerPairKey: string | null;
-  }>
-): Map<number, Stage> => {
-  const assignments = new Map<number, Stage>();
-  if (matches.length === 0) return assignments;
-
-  const maxRound = Math.max(...matches.map((m) => m.round));
-  const setStage = (playerId: number | null, stage: Stage) => {
-    if (playerId == null) return;
-    const current = assignments.get(playerId);
-    const rank: Record<Stage, number> = {
-      OCTAVOS: 1,
-      CUARTOS: 2,
-      SEMIS: 3,
-      SUBCAMPEON: 4,
-      CAMPEON: 5
-    };
-    if (!current || rank[stage] > rank[current]) {
-      assignments.set(playerId, stage);
-    }
-  };
-
-  for (const match of matches) {
-    if (!match.winnerPairKey) continue;
-    const keyA = bracketPairKey(match.pairAPlayer1, match.pairAPlayer2);
-    const keyB = bracketPairKey(match.pairBPlayer1, match.pairBPlayer2);
-    const winnerIsA = match.winnerPairKey === keyA;
-    const loserPlayers = winnerIsA
-      ? [match.pairBPlayer1, match.pairBPlayer2]
-      : [match.pairAPlayer1, match.pairAPlayer2];
-    const winnerPlayers = winnerIsA
-      ? [match.pairAPlayer1, match.pairAPlayer2]
-      : [match.pairBPlayer1, match.pairBPlayer2];
-
-    if (match.round === maxRound) {
-      winnerPlayers.forEach((id) => setStage(id, "CAMPEON"));
-      loserPlayers.forEach((id) => setStage(id, "SUBCAMPEON"));
-    } else {
-      const stage = stageForLostRound(match.round, maxRound);
-      loserPlayers.forEach((id) => setStage(id, stage));
-    }
-  }
-
-  return assignments;
 };
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
@@ -943,82 +870,33 @@ app.post("/dates/:id/bracket/generate", requireAdmin, async (req, res) => {
       return;
     }
 
-    type SlotPair = { player1: number; player2: number; key: string; zoneIndex: number; place: number };
-
-    const firsts: SlotPair[] = [];
-    const seconds: SlotPair[] = [];
-    const thirds: SlotPair[] = [];
-
-    zonesComputed.forEach((zone, zoneIndex) => {
-      zone.qualifiers.forEach((q) => {
-        const item: SlotPair = {
-          player1: q.player1,
-          player2: q.player2,
-          key: q.key,
-          zoneIndex,
-          place: q.place
-        };
-        if (q.place === 1) firsts.push(item);
-        else if (q.place === 2) seconds.push(item);
-        else if (q.place === 3) thirds.push(item);
+    const pairCount = zonesComputed.reduce((sum, zone) => sum + zone.pairs.length, 0);
+    const template = getBracketTemplate(pairCount);
+    if (!template) {
+      res.status(400).json({
+        error: `No hay plantilla de cuadro para ${pairCount} parejas. Usá 14–18 parejas.`
       });
-    });
-
-    // 2º de una zona vs 3º de otra (cruce). Si falta 3º, se emparejan restantes.
-    const playInMatches: Array<[SlotPair, SlotPair]> = [];
-    const usedKeys = new Set<string>();
-    for (let i = 0; i < seconds.length; i += 1) {
-      const second = seconds[i];
-      if (usedKeys.has(second.key)) continue;
-      const third =
-        thirds.find((t) => t.zoneIndex !== second.zoneIndex && !usedKeys.has(t.key)) ??
-        thirds.find((t) => !usedKeys.has(t.key));
-      if (!third) continue;
-      usedKeys.add(second.key);
-      usedKeys.add(third.key);
-      playInMatches.push([second, third]);
-    }
-    // Segundos/terceros sueltos se emparejan entre sí
-    const leftovers = [...seconds, ...thirds].filter((p) => !usedKeys.has(p.key));
-    for (let i = 0; i + 1 < leftovers.length; i += 2) {
-      playInMatches.push([leftovers[i], leftovers[i + 1]]);
-      usedKeys.add(leftovers[i].key);
-      usedKeys.add(leftovers[i + 1].key);
-    }
-    const leftoverBye = leftovers.find((p) => !usedKeys.has(p.key)) ?? null;
-
-    // Ronda 1: 1º con BYE intercalados con partidos 2º vs 3º (para que se crucen en la siguiente).
-    type R1Side = { player1: number; player2: number } | null;
-    const r1Matchups: Array<[R1Side, R1Side]> = [];
-    const playInQueue = [...playInMatches];
-    const firstQueue = [...firsts];
-    if (leftoverBye) {
-      // El suelto entra como si fuera un "1º" con bye a la siguiente ronda.
-      firstQueue.push(leftoverBye);
-    }
-
-    while (firstQueue.length > 0 || playInQueue.length > 0) {
-      if (firstQueue.length > 0) {
-        const first = firstQueue.shift()!;
-        r1Matchups.push([{ player1: first.player1, player2: first.player2 }, null]);
-      }
-      if (playInQueue.length > 0) {
-        const [a, b] = playInQueue.shift()!;
-        r1Matchups.push([
-          { player1: a.player1, player2: a.player2 },
-          { player1: b.player1, player2: b.player2 }
-        ]);
-      }
-    }
-
-    if (r1Matchups.length < 1) {
-      res.status(400).json({ error: "No hay suficientes clasificados para armar el cuadro." });
       return;
     }
 
-    const targetMatchups = nextPowerOfTwo(r1Matchups.length);
-    while (r1Matchups.length < targetMatchups) {
-      r1Matchups.push([null, null]);
+    const lookup = new Map<string, ResolvedPair>();
+    zonesComputed.forEach((zone, zoneIndex) => {
+      zone.qualifiers.forEach((q) => {
+        lookup.set(qualifierKey({ zone: zoneIndex + 1, place: q.place }), {
+          player1: q.player1,
+          player2: q.player2,
+          key: q.key
+        });
+      });
+    });
+
+    let r1Matchups: Array<[ResolvedPair | null, ResolvedPair | null]>;
+    try {
+      r1Matchups = resolveRound1Matchups(template, lookup);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "No se pudo armar el cuadro con la plantilla.";
+      res.status(400).json({ error: message });
+      return;
     }
 
     await prisma.bracketMatch.deleteMany({ where: { dateId } });
@@ -1077,7 +955,11 @@ app.post("/dates/:id/bracket/generate", requireAdmin, async (req, res) => {
       where: { dateId },
       orderBy: [{ round: "asc" }, { position: "asc" }]
     });
-    res.status(201).json(bracket);
+    res.status(201).json({
+      template: pairCount,
+      hasTemplate: hasBracketTemplate(pairCount),
+      bracket
+    });
   } catch (error) {
     if (handleDateGuardError(error, res)) return;
     throw error;
@@ -1194,7 +1076,7 @@ app.post("/dates/:id/close", requireAdmin, async (req, res) => {
       return;
     }
 
-    const assignments = computeStageAssignments(bracket);
+    const assignments = computeStageAssignments(bracket, pairKey);
 
     const firstSeasonDate = await prisma.tournamentDate.findFirst({
       orderBy: [{ eventDate: "asc" }, { id: "asc" }]

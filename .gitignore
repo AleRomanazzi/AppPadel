@@ -3,3 +3,9 @@
 ./node_modules
 node_modules
 /node_modules
+.DS_Store
+.cursor/
+backups/
+apps/api/scripts/sim-*
+apps/api/scripts/delete-test-date.ts
+**/tmp-sim*

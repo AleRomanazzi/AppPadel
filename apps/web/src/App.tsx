@@ -1288,9 +1288,9 @@ function App() {
                       <div className="stack">
                         <h3>Cerrar fecha</h3>
                         <p className="muted">
-                          Al cerrar se suman los puntos solos y se guarda el historial de parejas. La{" "}
-                          <strong>primera fecha</strong> de la temporada suma <strong>doble</strong>. Después tenés 24
-                          hs para corregir.
+                          Al cerrar se suman los puntos solos y se guarda el historial de parejas: 16vos 10, 8vos 15,
+                          cuartos 25, semis 50, sub 75, campeón 100. La <strong>primera fecha</strong> de la temporada
+                          suma <strong>doble</strong>. Después tenés 24 hs para corregir.
                         </p>
                         {!showCloseConfirm ? (
                           <button

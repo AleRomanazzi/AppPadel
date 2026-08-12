@@ -1,6 +1,13 @@
-export type Stage = "OCTAVOS" | "CUARTOS" | "SEMIS" | "SUBCAMPEON" | "CAMPEON";
+export type Stage =
+  | "DIECISEISAVOS"
+  | "OCTAVOS"
+  | "CUARTOS"
+  | "SEMIS"
+  | "SUBCAMPEON"
+  | "CAMPEON";
 
 export const STAGE_POINTS: Record<Stage, number> = {
+  DIECISEISAVOS: 10,
   OCTAVOS: 15,
   CUARTOS: 25,
   SEMIS: 50,
