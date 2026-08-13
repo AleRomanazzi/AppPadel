@@ -316,7 +316,7 @@ app.post("/auth/login", (req, res) => {
 });
 
 app.get("/players", requireAdmin, async (req, res) => {
-  const division = requireDivisionFromRequest(req, res);
+  const division = requireDivisionFromRequest(req, res, "MEN");
   if (!division) return;
   const players = await prisma.player.findMany({
     where: { division },
@@ -385,7 +385,7 @@ app.delete("/players/:id", requireAdmin, async (req, res) => {
 });
 
 app.get("/blacklist", requireAdmin, async (req, res) => {
-  const division = requireDivisionFromRequest(req, res);
+  const division = requireDivisionFromRequest(req, res, "MEN");
   if (!division) return;
   const entries = await prisma.blacklistedPlayer.findMany({
     where: { player: { division } },
@@ -396,7 +396,7 @@ app.get("/blacklist", requireAdmin, async (req, res) => {
 });
 
 app.put("/blacklist", requireAdmin, async (req, res) => {
-  const division = requireDivisionFromRequest(req, res);
+  const division = requireDivisionFromRequest(req, res, "MEN");
   if (!division) return;
   const body = req.body as { playerIds: number[] };
   const uniqueIds = Array.from(new Set(body.playerIds));

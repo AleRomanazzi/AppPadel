@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
   "installCommand": "cd ../.. && npm install",
-  "buildCommand": "cd ../.. && npm run build -w web",
+  "buildCommand": "cd ../.. && npm run build -w @apppadel/shared && npm run build -w web",
   "outputDirectory": "dist",
   "rewrites": [
     {

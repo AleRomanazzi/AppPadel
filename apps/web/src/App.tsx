@@ -491,7 +491,7 @@ function App() {
         <header className="app-header">
           <div>
             <p className="brand">AppPadel</p>
-            <p>Torneo de amigos · fácil de seguir</p>
+            <p>Torneo hombres y chicas</p>
           </div>
           <div className="nav-actions">
             <DivisionToggle division={division} onChange={changeDivision} />
