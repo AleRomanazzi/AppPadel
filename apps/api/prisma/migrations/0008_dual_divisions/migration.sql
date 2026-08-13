@@ -29,7 +29,7 @@ ranked_events AS (
     FROM "TournamentEvent"
 )
 UPDATE "TournamentDate" AS d
-SET "eventId" = e."id", "division" = 'MEN'
+SET "eventId" = re."id", "division" = 'MEN'
 FROM ranked_dates rd
 JOIN ranked_events re ON rd.rn = re.rn
 WHERE d."id" = rd."id";
@@ -48,12 +48,12 @@ CREATE UNIQUE INDEX "TournamentDate_eventId_division_key" ON "TournamentDate"("e
 -- Player: division + composite unique nickname
 ALTER TABLE "Player" ADD COLUMN "division" "Division" NOT NULL DEFAULT 'MEN';
 
-DROP INDEX IF EXISTS "Player_nickname_key";
+ALTER TABLE "Player" DROP CONSTRAINT IF EXISTS "Player_nickname_key";
 CREATE UNIQUE INDEX "Player_division_nickname_key" ON "Player"("division", "nickname");
 
 -- PartnerHistory: division + composite unique
 ALTER TABLE "PartnerHistory" ADD COLUMN "division" "Division" NOT NULL DEFAULT 'MEN';
 
-DROP INDEX IF EXISTS "PartnerHistory_playerAId_playerBId_key";
+ALTER TABLE "PartnerHistory" DROP CONSTRAINT IF EXISTS "PartnerHistory_playerAId_playerBId_key";
 CREATE UNIQUE INDEX "PartnerHistory_division_playerAId_playerBId_key"
     ON "PartnerHistory"("division", "playerAId", "playerBId");
