@@ -6,6 +6,10 @@ import { ADMIN_TOKEN_KEY, api, apiAdmin } from "./lib/api";
 import {
   DIVISION_LABELS,
   eventTracksLabel,
+  findDateInEvents,
+  formatDateSelectLabel,
+  formatDateTrackOptionLabel,
+  formatEventGroupLabel,
   readStoredDivision,
   storeDivision,
   withDivisionQuery,
@@ -99,6 +103,7 @@ function App() {
   const [historyLookupResult, setHistoryLookupResult] = useState<Player[]>([]);
 
   const [dates, setDates] = useState<TournamentDate[]>([]);
+  const [events, setEvents] = useState<TournamentEvent[]>([]);
   const [newDateName, setNewDateName] = useState("");
   const [newDateValue, setNewDateValue] = useState("");
   const [selectedDateId, setSelectedDateId] = useState<number | null>(null);
@@ -161,16 +166,30 @@ function App() {
   };
 
   const loadAdminData = async (activeDivision: Division = division) => {
-    const [playersData, datesData] = await Promise.all([
+    const [playersData, datesData, eventsData] = await Promise.all([
       apiAdmin<Player[]>(adminToken!, withDivisionQuery("/players", activeDivision)),
-      apiAdmin<TournamentDate[]>(adminToken!, withDivisionQuery("/dates", activeDivision))
+      apiAdmin<TournamentDate[]>(adminToken!, withDivisionQuery("/dates", activeDivision)),
+      apiAdmin<TournamentEvent[]>(adminToken!, "/events")
     ]);
     setPlayers(playersData);
     setDates(datesData);
+    setEvents(eventsData);
     setSelectedDateId((current) => {
       if (current && datesData.some((date) => date.id === current)) return current;
       return datesData[0]?.id ?? null;
     });
+  };
+
+  const selectAdminDate = (dateId: number) => {
+    const date = findDateInEvents(events, dateId) ?? dates.find((item) => item.id === dateId);
+    if (!date) return;
+    if (date.division !== division) {
+      setDivision(date.division);
+      storeDivision(date.division);
+    }
+    setSelectedDateId(dateId);
+    setDateStep(1);
+    setShowDeleteConfirm(false);
   };
 
   const refreshWorkspace = async (dateId: number) => {
@@ -474,11 +493,6 @@ function App() {
       setDrawConflicts([]);
       setDateStep(1);
       await Promise.all([loadAdminData(), loadPublicData()]);
-      const remaining = await apiAdmin<TournamentDate[]>(adminToken!, withDivisionQuery("/dates", division));
-      setDates(remaining);
-      const nextId = remaining[0]?.id ?? null;
-      setSelectedDateId(nextId);
-      if (publicDateId === deletingId) setPublicDateId(nextId);
       setDateMessage("Fecha eliminada (puntos y partidos de esa fecha también). Los jugadores se mantienen.");
     } catch (error) {
       setDateMessage(error instanceof Error ? error.message : "No se pudo eliminar la fecha");
@@ -562,7 +576,7 @@ function App() {
                     <option value="">Elegir fecha</option>
                     {publicDates.map((date) => (
                       <option key={date.id} value={date.id}>
-                        {date.name} · {formatEventDate(date.eventDate)}
+                        {formatDateSelectLabel(date, formatEventDate)}
                       </option>
                     ))}
                   </select>
@@ -635,7 +649,7 @@ function App() {
                     <option value="">Elegir fecha</option>
                     {publicDates.map((date) => (
                       <option key={date.id} value={date.id}>
-                        {date.name} · {formatEventDate(date.eventDate)}
+                        {formatDateSelectLabel(date, formatEventDate)}
                       </option>
                     ))}
                   </select>
@@ -1066,22 +1080,31 @@ function App() {
                     </button>
 
                     <div className="field" style={{ marginTop: "1rem" }}>
-                      <label>O elegir una fecha ya creada</label>
+                      <label htmlFor="admin-date">Día y torneo a organizar</label>
                       <select
+                        id="admin-date"
                         value={selectedDateId ?? ""}
                         onChange={(e) => {
-                          setSelectedDateId(Number(e.target.value));
-                          setDateStep(1);
-                          setShowDeleteConfirm(false);
+                          const dateId = Number(e.target.value);
+                          if (!dateId) return;
+                          selectAdminDate(dateId);
                         }}
                       >
                         <option value="">Elegir</option>
-                        {dates.map((date) => (
-                          <option key={date.id} value={date.id}>
-                            {date.name} · {formatEventDate(date.eventDate)} ({date.status})
-                          </option>
+                        {events.map((event) => (
+                          <optgroup key={event.id} label={formatEventGroupLabel(event, formatEventDate)}>
+                            {event.dates.map((date) => (
+                              <option key={date.id} value={date.id}>
+                                {formatDateTrackOptionLabel(date)}
+                              </option>
+                            ))}
+                          </optgroup>
                         ))}
                       </select>
+                      <p className="muted" style={{ marginTop: "0.35rem" }}>
+                        Si el día tiene hombres y chicas, elegí el track correspondiente. El toggle arriba se ajusta
+                        solo.
+                      </p>
                     </div>
 
                     {selectedDateId ? (

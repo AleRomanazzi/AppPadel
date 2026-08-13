@@ -1,5 +1,6 @@
 import type { Division } from "@apppadel/shared";
 import { DIVISION_LABELS } from "@apppadel/shared";
+import type { TournamentDate, TournamentEvent } from "./types";
 
 export type { Division };
 export { DIVISION_LABELS };
@@ -31,4 +32,46 @@ export function eventTracksLabel(divisions: Division[]): string {
   if (hasMen) return "Solo hombres";
   if (hasWomen) return "Solo chicas";
   return "";
+}
+
+export function formatDateStatus(status: string): string {
+  switch (status) {
+    case "OPEN":
+      return "Abierta";
+    case "CLOSED":
+      return "Cerrada";
+    case "DRAFT":
+      return "Borrador";
+    default:
+      return status;
+  }
+}
+
+/** Encabezado de grupo en el desplegable admin: "Fecha 5 · 15/03/2026" */
+export function formatEventGroupLabel(
+  event: Pick<TournamentEvent, "name" | "eventDate">,
+  formatEventDate: (value: string) => string
+): string {
+  return `${event.name} · ${formatEventDate(event.eventDate)}`;
+}
+
+/** Opción dentro del grupo: "Hombres · Abierta" */
+export function formatDateTrackOptionLabel(date: Pick<TournamentDate, "division" | "status">): string {
+  return `${DIVISION_LABELS[date.division]} · ${formatDateStatus(date.status)}`;
+}
+
+/** Etiqueta plana (vista pública): "Fecha 5 · 15/03/2026 · Abierta" */
+export function formatDateSelectLabel(
+  date: Pick<TournamentDate, "name" | "eventDate" | "status">,
+  formatEventDate: (value: string) => string
+): string {
+  return `${date.name} · ${formatEventDate(date.eventDate)} · ${formatDateStatus(date.status)}`;
+}
+
+export function findDateInEvents(events: TournamentEvent[], dateId: number): TournamentDate | undefined {
+  for (const event of events) {
+    const match = event.dates.find((date) => date.id === dateId);
+    if (match) return match;
+  }
+  return undefined;
 }
