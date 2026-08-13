@@ -36,12 +36,16 @@ export function parseDivisions(raw: unknown): Division[] {
   return result;
 }
 
-export function divisionFromRequest(req: Request): Division | null {
-  return parseDivision(req.query.division ?? req.headers["x-division"]);
+export function divisionFromRequest(req: Request, fallback?: Division): Division | null {
+  return parseDivision(req.query.division ?? req.headers["x-division"]) ?? fallback ?? null;
 }
 
-export function requireDivisionFromRequest(req: Request, res: Response): Division | null {
-  const division = divisionFromRequest(req);
+export function requireDivisionFromRequest(
+  req: Request,
+  res: Response,
+  fallback?: Division
+): Division | null {
+  const division = divisionFromRequest(req, fallback);
   if (!division) {
     res.status(400).json({ error: "Parámetro division requerido (men o women)." });
     return null;

@@ -1483,7 +1483,7 @@ app.post("/dates/:id/results", requireAdmin, async (req, res) => {
 });
 
 app.get("/ranking", async (req, res) => {
-  const division = requireDivisionFromRequest(req, res);
+  const division = requireDivisionFromRequest(req, res, "MEN");
   if (!division) return;
   const players = await prisma.player.findMany({
     include: { pointsEntries: true },
@@ -1495,6 +1495,7 @@ app.get("/ranking", async (req, res) => {
       nickname: player.nickname,
       points: player.pointsEntries.reduce((sum, item) => sum + item.points, 0)
     }))
+    .filter((row) => row.points > 0)
     .sort((a, b) => b.points - a.points);
 
   res.json(ranking);
@@ -1543,7 +1544,7 @@ app.get("/ranking/ledger", requireAdmin, async (req, res) => {
 });
 
 app.get("/public/overview", async (req, res) => {
-  const division = requireDivisionFromRequest(req, res);
+  const division = requireDivisionFromRequest(req, res, "MEN");
   if (!division) return;
   const [ranking, dates] = await Promise.all([
     prisma.player.findMany({ include: { pointsEntries: true }, where: { active: true, division } }),
@@ -1562,6 +1563,7 @@ app.get("/public/overview", async (req, res) => {
         nickname: p.nickname,
         points: p.pointsEntries.reduce((sum, item) => sum + item.points, 0)
       }))
+      .filter((row) => row.points > 0)
       .sort((a, b) => b.points - a.points),
     dates: dates.map(serializeDate)
   });

@@ -137,17 +137,27 @@ function App() {
     setHistoryLookupResult([]);
   };
 
+  const [publicLoadError, setPublicLoadError] = useState("");
+
   const loadPublicData = async (activeDivision: Division = division) => {
-    const [rankingData, datesData] = await Promise.all([
-      api<Ranking[]>(withDivisionQuery("/ranking", activeDivision)),
-      api<TournamentDate[]>(withDivisionQuery("/public/dates", activeDivision))
-    ]);
-    setRanking(rankingData);
-    setPublicDates(datesData);
-    setPublicDateId((current) => {
-      if (current && datesData.some((date) => date.id === current)) return current;
-      return datesData[0]?.id ?? null;
-    });
+    try {
+      setPublicLoadError("");
+      const [rankingData, datesData] = await Promise.all([
+        api<Ranking[]>(withDivisionQuery("/ranking", activeDivision)),
+        api<TournamentDate[]>(withDivisionQuery("/public/dates", activeDivision))
+      ]);
+      setRanking(rankingData);
+      setPublicDates(datesData);
+      setPublicDateId((current) => {
+        if (current && datesData.some((date) => date.id === current)) return current;
+        return datesData[0]?.id ?? null;
+      });
+    } catch (error) {
+      setPublicLoadError(error instanceof Error ? error.message : "No se pudo cargar el torneo");
+      setRanking([]);
+      setPublicDates([]);
+      setPublicDateId(null);
+    }
   };
 
   const loadAdminData = async (activeDivision: Division = division) => {
@@ -527,7 +537,15 @@ function App() {
                       <span className="rank-points">{row.points} pts</span>
                     </div>
                   ))}
-                  {ranking.length === 0 ? <p className="muted">Todavía no hay puntos cargados.</p> : null}
+                  {ranking.length === 0 ? (
+                    <p className="muted">
+                      {publicLoadError
+                        ? publicLoadError
+                        : division === "WOMEN"
+                          ? "Todavía no hay puntos en el torneo de chicas."
+                          : "Todavía no hay puntos cargados."}
+                    </p>
+                  ) : null}
                 </div>
               </section>
 
