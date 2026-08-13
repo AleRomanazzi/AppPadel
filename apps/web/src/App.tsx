@@ -3,6 +3,14 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-r
 import { TournamentBracket } from "./components/TournamentBracket";
 import { ScoreInput, isValidSetScore } from "./components/ScoreInput";
 import { ADMIN_TOKEN_KEY, api, apiAdmin } from "./lib/api";
+import {
+  DIVISION_LABELS,
+  eventTracksLabel,
+  readStoredDivision,
+  storeDivision,
+  withDivisionQuery,
+  type Division
+} from "./lib/division";
 import type {
   BracketMatch,
   DateWorkspace,
@@ -11,6 +19,7 @@ import type {
   Player,
   Ranking,
   TournamentDate,
+  TournamentEvent,
   ZoneComputed
 } from "./lib/types";
 
@@ -33,6 +42,31 @@ const DATE_STEPS: Array<{ id: DateStep; label: string }> = [
   { id: 5, label: "5. Cerrar" }
 ];
 
+function DivisionToggle({
+  division,
+  onChange
+}: {
+  division: Division;
+  onChange: (division: Division) => void;
+}) {
+  return (
+    <div className="division-toggle" role="tablist" aria-label="Torneo">
+      {(["MEN", "WOMEN"] as Division[]).map((value) => (
+        <button
+          key={value}
+          type="button"
+          role="tab"
+          aria-selected={division === value}
+          className={`btn ${division === value ? "btn-primary" : "btn-soft"}`}
+          onClick={() => onChange(value)}
+        >
+          {DIVISION_LABELS[value]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -46,6 +80,10 @@ function App() {
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const [division, setDivision] = useState<Division>(() => readStoredDivision());
+  const [newEventMen, setNewEventMen] = useState(true);
+  const [newEventWomen, setNewEventWomen] = useState(false);
 
   const [players, setPlayers] = useState<Player[]>([]);
   const [ranking, setRanking] = useState<Ranking[]>([]);
@@ -90,24 +128,39 @@ function App() {
   const activePlayers = useMemo(() => players.filter((p) => p.active !== false), [players]);
   const dateLocked = Boolean(dateWorkspace?.locked);
 
-  const loadPublicData = async () => {
+  const changeDivision = (next: Division) => {
+    setDivision(next);
+    storeDivision(next);
+    setSelectedDateId(null);
+    setPublicDateId(null);
+    setDateWorkspace(null);
+    setHistoryLookupResult([]);
+  };
+
+  const loadPublicData = async (activeDivision: Division = division) => {
     const [rankingData, datesData] = await Promise.all([
-      api<Ranking[]>("/ranking"),
-      api<TournamentDate[]>("/public/dates")
+      api<Ranking[]>(withDivisionQuery("/ranking", activeDivision)),
+      api<TournamentDate[]>(withDivisionQuery("/public/dates", activeDivision))
     ]);
     setRanking(rankingData);
     setPublicDates(datesData);
-    if (datesData.length > 0 && !publicDateId) setPublicDateId(datesData[0].id);
+    setPublicDateId((current) => {
+      if (current && datesData.some((date) => date.id === current)) return current;
+      return datesData[0]?.id ?? null;
+    });
   };
 
-  const loadAdminData = async () => {
+  const loadAdminData = async (activeDivision: Division = division) => {
     const [playersData, datesData] = await Promise.all([
-      apiAdmin<Player[]>(adminToken!, "/players"),
-      apiAdmin<TournamentDate[]>(adminToken!, "/dates")
+      apiAdmin<Player[]>(adminToken!, withDivisionQuery("/players", activeDivision)),
+      apiAdmin<TournamentDate[]>(adminToken!, withDivisionQuery("/dates", activeDivision))
     ]);
     setPlayers(playersData);
     setDates(datesData);
-    if (!selectedDateId && datesData.length > 0) setSelectedDateId(datesData[0].id);
+    setSelectedDateId((current) => {
+      if (current && datesData.some((date) => date.id === current)) return current;
+      return datesData[0]?.id ?? null;
+    });
   };
 
   const refreshWorkspace = async (dateId: number) => {
@@ -131,8 +184,8 @@ function App() {
   };
 
   useEffect(() => {
-    void loadPublicData();
-  }, []);
+    void loadPublicData(division);
+  }, [division]);
 
   useEffect(() => {
     if (!publicDateId) return;
@@ -153,21 +206,21 @@ function App() {
     void loadDateViews();
     if (!isDisplayMode) return;
     const timer = window.setInterval(() => {
-      void loadPublicData();
+      void loadPublicData(division);
       void loadDateViews();
     }, 15000);
     return () => window.clearInterval(timer);
-  }, [publicDateId, isDisplayMode]);
+  }, [publicDateId, isDisplayMode, division]);
 
   useEffect(() => {
     if (!adminToken) return;
-    void loadAdminData().catch((error) => {
+    void loadAdminData(division).catch((error) => {
       setAdminError(error instanceof Error ? error.message : "No se pudo cargar el panel");
     });
-    void apiAdmin<LedgerEntry[]>(adminToken, "/ranking/ledger")
+    void apiAdmin<LedgerEntry[]>(adminToken, withDivisionQuery("/ranking/ledger", division))
       .then(setLedger)
       .catch(() => setLedger([]));
-  }, [adminToken]);
+  }, [adminToken, division]);
 
   useEffect(() => {
     if (!adminToken || !selectedDateId) return;
@@ -201,9 +254,9 @@ function App() {
   const createPlayer = async () => {
     setFormError("");
     try {
-      await apiAdmin(adminToken!, "/players", {
+      await apiAdmin(adminToken!, withDivisionQuery("/players", division), {
         method: "POST",
-        body: JSON.stringify({ nickname })
+        body: JSON.stringify({ nickname, division })
       });
       setNickname("");
       await loadAdminData();
@@ -232,21 +285,33 @@ function App() {
       setDateMessage("Completá el nombre y el día de la fecha.");
       return;
     }
+    const divisions: Division[] = [];
+    if (newEventMen) divisions.push("MEN");
+    if (newEventWomen) divisions.push("WOMEN");
+    if (divisions.length === 0) {
+      setDateMessage("Elegí al menos un torneo: hombres y/o chicas.");
+      return;
+    }
     try {
-      const created = await apiAdmin<TournamentDate>(adminToken!, "/dates", {
+      const created = await apiAdmin<TournamentEvent>(adminToken!, "/events", {
         method: "POST",
-        body: JSON.stringify({ name: newDateName.trim(), eventDate: newDateValue })
+        body: JSON.stringify({ name: newDateName.trim(), eventDate: newDateValue, divisions })
       });
-      setDates((prev) => [created, ...prev.filter((d) => d.id !== created.id)]);
-      setPublicDates((prev) => [created, ...prev.filter((d) => d.id !== created.id)]);
-      setSelectedDateId(created.id);
-      setPublicDateId(created.id);
-      setNewDateName("");
-      setNewDateValue("");
-      setDateStep(1);
-      setDateMessage(`Fecha creada: ${created.name} (${formatEventDate(created.eventDate)}). Ahora elegí quién juega.`);
+      const trackForDivision = created.dates.find((date) => date.division === division) ?? created.dates[0];
       await loadAdminData();
       await loadPublicData();
+      if (trackForDivision) {
+        setSelectedDateId(trackForDivision.id);
+        setPublicDateId(trackForDivision.id);
+      }
+      setNewDateName("");
+      setNewDateValue("");
+      setNewEventMen(true);
+      setNewEventWomen(false);
+      setDateStep(1);
+      setDateMessage(
+        `Fecha creada: ${created.name} (${formatEventDate(created.eventDate)}) · ${eventTracksLabel(divisions)}.`
+      );
     } catch (error) {
       setDateMessage(error instanceof Error ? error.message : "No se pudo crear la fecha");
     }
@@ -399,7 +464,7 @@ function App() {
       setDrawConflicts([]);
       setDateStep(1);
       await Promise.all([loadAdminData(), loadPublicData()]);
-      const remaining = await apiAdmin<TournamentDate[]>(adminToken!, "/dates");
+      const remaining = await apiAdmin<TournamentDate[]>(adminToken!, withDivisionQuery("/dates", division));
       setDates(remaining);
       const nextId = remaining[0]?.id ?? null;
       setSelectedDateId(nextId);
@@ -419,6 +484,7 @@ function App() {
             <p>Torneo de amigos · fácil de seguir</p>
           </div>
           <div className="nav-actions">
+            <DivisionToggle division={division} onChange={changeDivision} />
             <Link className="btn btn-ghost" to="/">
               Ver torneo
             </Link>
@@ -448,8 +514,9 @@ function App() {
           path="/"
           element={
             <div className="stack">
+              <DivisionToggle division={division} onChange={changeDivision} />
               <section className="panel">
-                <h2>Ranking</h2>
+                <h2>Ranking · {DIVISION_LABELS[division]}</h2>
                 <p className="panel-lead">Así van los puntos de la temporada.</p>
                 <div className="stack">
                   {ranking.map((row, index) => (
@@ -511,7 +578,10 @@ function App() {
                     </div>
                   ))}
                   {publicDateId && publicZones.length === 0 ? (
-                    <p className="muted">Aún no hay zonas para esta fecha.</p>
+                    <p className="muted">Aún no hay zonas para esta fecha en {DIVISION_LABELS[division].toLowerCase()}.</p>
+                  ) : null}
+                  {!publicDateId && publicDates.length === 0 ? (
+                    <p className="muted">Todavía no hay fechas con torneo de {DIVISION_LABELS[division].toLowerCase()}.</p>
                   ) : null}
                 </div>
 
@@ -537,6 +607,7 @@ function App() {
                   <p>Modo pantalla · se actualiza solo</p>
                 </div>
                 <div className="nav-actions">
+                  <DivisionToggle division={division} onChange={changeDivision} />
                   <select
                     className="display-select"
                     value={publicDateId ?? ""}
@@ -558,7 +629,7 @@ function App() {
 
               <div className="display-grid">
                 <section className="display-panel">
-                  <h2>Ranking</h2>
+                  <h2>Ranking · {DIVISION_LABELS[division]}</h2>
                   <ol className="display-rank">
                     {ranking.slice(0, 12).map((row, index) => (
                       <li key={row.playerId}>
@@ -629,6 +700,7 @@ function App() {
               </section>
             ) : (
               <div className="stack">
+                <DivisionToggle division={division} onChange={changeDivision} />
                 <nav className="admin-nav" aria-label="Secciones del organizador">
                   <button
                     className={`btn ${adminSection === "fecha" ? "btn-primary" : "btn-soft"}`}
@@ -669,7 +741,7 @@ function App() {
 
                 {adminSection === "jugadores" ? (
                   <section className="panel">
-                    <h2>Jugadores</h2>
+                    <h2>Jugadores · {DIVISION_LABELS[division]}</h2>
                     <p className="panel-lead">Agregá apodos. Después los marcás en cada fecha.</p>
                     <div className="field">
                       <label htmlFor="nick">Apodo nuevo</label>
@@ -714,7 +786,7 @@ function App() {
                                       void apiAdmin(adminToken, `/players/${player.id}`, {
                                         method: "PUT",
                                         body: JSON.stringify({ active: true })
-                                      }).then(loadAdminData)
+                                      }).then(() => loadAdminData())
                                     }
                                   >
                                     Activar
@@ -724,7 +796,7 @@ function App() {
                                     className="btn btn-danger"
                                     onClick={() =>
                                       void apiAdmin(adminToken, `/players/${player.id}`, { method: "DELETE" }).then(
-                                        loadAdminData
+                                        () => loadAdminData()
                                       )
                                     }
                                   >
@@ -899,7 +971,9 @@ function App() {
                             setManualPointsBatch([]);
                             await Promise.all([
                               loadPublicData(),
-                              apiAdmin<LedgerEntry[]>(adminToken, "/ranking/ledger").then(setLedger)
+                              apiAdmin<LedgerEntry[]>(adminToken, withDivisionQuery("/ranking/ledger", division)).then(
+                                setLedger
+                              )
                             ]);
                           }}
                         >
@@ -937,7 +1011,7 @@ function App() {
 
                 {adminSection === "fecha" ? (
                   <section className="panel">
-                    <h2>Fecha de hoy</h2>
+                    <h2>Fecha de hoy · {DIVISION_LABELS[division]}</h2>
                     <p className="panel-lead">Seguí los pasos. No hace falta tocar todo a la vez.</p>
 
                     <div className="grid-2">
@@ -954,6 +1028,21 @@ function App() {
                         <input type="date" value={newDateValue} onChange={(e) => setNewDateValue(e.target.value)} />
                       </div>
                     </div>
+                    <fieldset className="field" style={{ border: "none", padding: 0 }}>
+                      <legend style={{ marginBottom: "0.5rem" }}>Torneos en este día</legend>
+                      <label className="pair-row" style={{ justifyContent: "flex-start", gap: "0.5rem" }}>
+                        <input type="checkbox" checked={newEventMen} onChange={(e) => setNewEventMen(e.target.checked)} />
+                        Hombres
+                      </label>
+                      <label className="pair-row" style={{ justifyContent: "flex-start", gap: "0.5rem" }}>
+                        <input
+                          type="checkbox"
+                          checked={newEventWomen}
+                          onChange={(e) => setNewEventWomen(e.target.checked)}
+                        />
+                        Chicas
+                      </label>
+                    </fieldset>
                     <button className="btn btn-primary" onClick={() => void createTournamentDate()}>
                       Crear fecha nueva
                     </button>

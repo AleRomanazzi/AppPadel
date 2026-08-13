@@ -3,8 +3,18 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import { Prisma, type TournamentDate } from "@prisma/client";
-import { STAGE_POINTS, type Stage } from "@apppadel/shared";
+import { STAGE_POINTS, type Division, type Stage } from "@apppadel/shared";
 import { prisma } from "./db.js";
+import {
+  dateIncludeEvent,
+  divisionFromRequest,
+  eventIncludeDates,
+  parseDivision,
+  parseDivisions,
+  requireDivisionFromRequest,
+  serializeDate,
+  serializeEvent
+} from "./division.js";
 import { generatePairs, normalizePair, pairKey, validatePair } from "./pairing.js";
 import { scoreDiffForPair, isValidSetScore } from "./score.js";
 import { zoneIndexBySeedRank } from "./seedPlacement.js";
@@ -89,10 +99,12 @@ const handleDateGuardError = (error: unknown, res: express.Response): boolean =>
   return false;
 };
 
-const getConstraints = async () => {
+const getConstraints = async (division: Division) => {
   const [blacklistedPlayers, historyPairs] = await Promise.all([
-    prisma.blacklistedPlayer.findMany(),
-    prisma.partnerHistory.findMany()
+    prisma.blacklistedPlayer.findMany({
+      where: { player: { division } }
+    }),
+    prisma.partnerHistory.findMany({ where: { division } })
   ]);
   const blacklistedIds = blacklistedPlayers.map((item) => item.playerId);
   const blacklist = new Set<string>();
@@ -118,9 +130,9 @@ const shuffle = <T,>(items: T[]): T[] => {
   return clone;
 };
 
-const getRankingScores = async (): Promise<Map<number, number>> => {
+const getRankingScores = async (division: Division): Promise<Map<number, number>> => {
   const players = await prisma.player.findMany({
-    where: { active: true },
+    where: { active: true, division },
     include: { pointsEntries: true }
   });
   return new Map(
@@ -131,9 +143,29 @@ const getRankingScores = async (): Promise<Map<number, number>> => {
   );
 };
 
-const hasAnyRankingPoints = async (): Promise<boolean> => {
-  const entry = await prisma.rankingPointEntry.findFirst({ select: { id: true } });
+const hasAnyRankingPoints = async (division: Division): Promise<boolean> => {
+  const entry = await prisma.rankingPointEntry.findFirst({
+    where: { player: { division } },
+    select: { id: true }
+  });
   return Boolean(entry);
+};
+
+const loadDateWithEvent = async (dateId: number) =>
+  prisma.tournamentDate.findUnique({
+    where: { id: dateId },
+    include: dateIncludeEvent
+  });
+
+const assertPlayersMatchDivision = async (playerIds: number[], division: Division): Promise<string | null> => {
+  if (playerIds.length === 0) return null;
+  const players = await prisma.player.findMany({
+    where: { id: { in: playerIds } },
+    select: { id: true, division: true, nickname: true }
+  });
+  const wrong = players.filter((player) => player.division !== division);
+  if (wrong.length === 0) return null;
+  return `Jugadores de otra categoría: ${wrong.map((p) => p.nickname).join(", ")}`;
 };
 
 type ZonePairStat = {
@@ -283,24 +315,34 @@ app.post("/auth/login", (req, res) => {
   res.json({ token: ADMIN_TOKEN, user: { username: ADMIN_USERNAME } });
 });
 
-app.get("/players", requireAdmin, async (_req, res) => {
-  const players = await prisma.player.findMany({ orderBy: [{ active: "desc" }, { nickname: "asc" }] });
+app.get("/players", requireAdmin, async (req, res) => {
+  const division = requireDivisionFromRequest(req, res);
+  if (!division) return;
+  const players = await prisma.player.findMany({
+    where: { division },
+    orderBy: [{ active: "desc" }, { nickname: "asc" }]
+  });
   res.json(players);
 });
 
 app.post("/players", requireAdmin, async (req, res) => {
-  const payload = req.body as { nickname: string };
+  const payload = req.body as { nickname: string; division?: Division };
+  const division = parseDivision(payload.division) ?? divisionFromRequest(req);
+  if (!division) {
+    res.status(400).json({ error: "Parámetro division requerido (men o women)." });
+    return;
+  }
   const nickname = payload.nickname?.trim();
   if (!nickname) {
     res.status(400).json({ error: "El apodo es obligatorio." });
     return;
   }
   try {
-    const player = await prisma.player.create({ data: { nickname } });
+    const player = await prisma.player.create({ data: { nickname, division } });
     res.status(201).json(player);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      res.status(409).json({ error: "El apodo ya existe. Debe ser irrepetible." });
+      res.status(409).json({ error: "El apodo ya existe en este torneo." });
       return;
     }
     throw error;
@@ -325,7 +367,7 @@ app.put("/players/:id", requireAdmin, async (req, res) => {
     res.json(player);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      res.status(409).json({ error: "El apodo ya existe. Debe ser irrepetible." });
+      res.status(409).json({ error: "El apodo ya existe en este torneo." });
       return;
     }
     throw error;
@@ -342,8 +384,11 @@ app.delete("/players/:id", requireAdmin, async (req, res) => {
   res.json(player);
 });
 
-app.get("/blacklist", requireAdmin, async (_req, res) => {
+app.get("/blacklist", requireAdmin, async (req, res) => {
+  const division = requireDivisionFromRequest(req, res);
+  if (!division) return;
   const entries = await prisma.blacklistedPlayer.findMany({
+    where: { player: { division } },
     include: { player: true },
     orderBy: { player: { nickname: "asc" } }
   });
@@ -351,15 +396,30 @@ app.get("/blacklist", requireAdmin, async (_req, res) => {
 });
 
 app.put("/blacklist", requireAdmin, async (req, res) => {
+  const division = requireDivisionFromRequest(req, res);
+  if (!division) return;
   const body = req.body as { playerIds: number[] };
   const uniqueIds = Array.from(new Set(body.playerIds));
+  const mismatch = await assertPlayersMatchDivision(uniqueIds, division);
+  if (mismatch) {
+    res.status(400).json({ error: mismatch });
+    return;
+  }
+
+  const divisionPlayerIds = (
+    await prisma.player.findMany({
+      where: { division },
+      select: { id: true }
+    })
+  ).map((player) => player.id);
 
   await prisma.$transaction([
-    prisma.blacklistedPlayer.deleteMany({}),
+    prisma.blacklistedPlayer.deleteMany({ where: { playerId: { in: divisionPlayerIds } } }),
     prisma.blacklistedPlayer.createMany({ data: uniqueIds.map((playerId) => ({ playerId })) })
   ]);
 
   const entries = await prisma.blacklistedPlayer.findMany({
+    where: { player: { division } },
     include: { player: true },
     orderBy: { player: { nickname: "asc" } }
   });
@@ -373,8 +433,17 @@ app.post("/players/:id/partners-history/:otherId", requireAdmin, async (req, res
     res.status(400).json({ error: "Un jugador no puede cargarse como pareja de sí mismo." });
     return;
   }
+  const players = await prisma.player.findMany({
+    where: { id: { in: [a, b] } },
+    select: { id: true, division: true }
+  });
+  if (players.length !== 2 || players[0]?.division !== players[1]?.division) {
+    res.status(400).json({ error: "Los jugadores deben ser del mismo torneo (hombres o chicas)." });
+    return;
+  }
+  const division = players[0]!.division;
   const existing = await prisma.partnerHistory.findUnique({
-    where: { playerAId_playerBId: { playerAId: a, playerBId: b } }
+    where: { division_playerAId_playerBId: { division, playerAId: a, playerBId: b } }
   });
   if (existing) {
     res.status(200).json({ exists: true, message: "Esa relación ya existe." });
@@ -382,26 +451,49 @@ app.post("/players/:id/partners-history/:otherId", requireAdmin, async (req, res
   }
 
   const created = await prisma.partnerHistory.create({
-    data: { playerAId: a, playerBId: b }
+    data: { playerAId: a, playerBId: b, division }
   });
   res.status(201).json({ exists: false, message: "Relación agregada.", item: created });
 });
 
 app.delete("/players/:id/partners-history/:otherId", requireAdmin, async (req, res) => {
   const [a, b] = normalizePair(Number(req.params.id), Number(req.params.otherId));
-  await prisma.partnerHistory.delete({ where: { playerAId_playerBId: { playerAId: a, playerBId: b } } });
+  const players = await prisma.player.findMany({
+    where: { id: { in: [a, b] } },
+    select: { division: true }
+  });
+  if (players.length !== 2 || players[0]?.division !== players[1]?.division) {
+    res.status(400).json({ error: "Los jugadores deben ser del mismo torneo." });
+    return;
+  }
+  const division = players[0]!.division;
+  await prisma.partnerHistory.delete({
+    where: { division_playerAId_playerBId: { division, playerAId: a, playerBId: b } }
+  });
   res.status(204).send();
 });
 
 app.get("/players/:id/partners-history", requireAdmin, async (req, res) => {
   const playerId = Number(req.params.id);
+  const player = await prisma.player.findUnique({
+    where: { id: playerId },
+    select: { division: true }
+  });
+  if (!player) {
+    res.status(404).json({ error: "Jugador no encontrado." });
+    return;
+  }
   const [historyRows, players] = await Promise.all([
     prisma.partnerHistory.findMany({
       where: {
+        division: player.division,
         OR: [{ playerAId: playerId }, { playerBId: playerId }]
       }
     }),
-    prisma.player.findMany({ select: { id: true, nickname: true } })
+    prisma.player.findMany({
+      where: { division: player.division },
+      select: { id: true, nickname: true }
+    })
   ]);
 
   const playersById = new Map(players.map((player) => [player.id, player]));
@@ -414,9 +506,30 @@ app.get("/players/:id/partners-history", requireAdmin, async (req, res) => {
   res.json(partners);
 });
 
-app.get("/dates", async (_req, res) => {
-  const dates = await prisma.tournamentDate.findMany({ orderBy: { eventDate: "desc" } });
-  res.json(dates);
+app.get("/events", async (req, res) => {
+  const division = divisionFromRequest(req);
+  const events = await prisma.tournamentEvent.findMany({
+    where: division ? { dates: { some: { division } } } : undefined,
+    include: {
+      dates: {
+        where: division ? { division } : undefined,
+        include: dateIncludeEvent,
+        orderBy: [{ division: "asc" }]
+      }
+    },
+    orderBy: { eventDate: "desc" }
+  });
+  res.json(events.map(serializeEvent));
+});
+
+app.get("/dates", async (req, res) => {
+  const division = divisionFromRequest(req);
+  const dates = await prisma.tournamentDate.findMany({
+    where: division ? { division } : undefined,
+    include: dateIncludeEvent,
+    orderBy: [{ event: { eventDate: "desc" } }, { id: "desc" }]
+  });
+  res.json(dates.map(serializeDate));
 });
 
 const parseDateOnly = (value: string): Date | null => {
@@ -431,10 +544,11 @@ const parseDateOnly = (value: string): Date | null => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
-app.post("/dates", requireAdmin, async (req, res) => {
-  const payload = req.body as { name?: string; eventDate?: string };
+app.post("/events", requireAdmin, async (req, res) => {
+  const payload = req.body as { name?: string; eventDate?: string; divisions?: Division[] };
   const name = payload.name?.trim();
   const eventDate = payload.eventDate ? parseDateOnly(payload.eventDate) : null;
+  const divisions = parseDivisions(payload.divisions);
   if (!name) {
     res.status(400).json({ error: "El nombre de la fecha es obligatorio." });
     return;
@@ -443,10 +557,83 @@ app.post("/dates", requireAdmin, async (req, res) => {
     res.status(400).json({ error: "La fecha del día es inválida." });
     return;
   }
-  const created = await prisma.tournamentDate.create({
-    data: { name, eventDate, status: "OPEN" }
+  if (divisions.length === 0) {
+    res.status(400).json({ error: "Elegí al menos un torneo: hombres y/o chicas." });
+    return;
+  }
+
+  const created = await prisma.$transaction(async (tx) => {
+    const event = await tx.tournamentEvent.create({ data: { name, eventDate } });
+    for (const division of divisions) {
+      await tx.tournamentDate.create({
+        data: { eventId: event.id, division, status: "OPEN" }
+      });
+    }
+    return tx.tournamentEvent.findUniqueOrThrow({
+      where: { id: event.id },
+      include: eventIncludeDates
+    });
   });
-  res.status(201).json(created);
+
+  res.status(201).json(serializeEvent(created));
+});
+
+app.post("/events/:eventId/divisions", requireAdmin, async (req, res) => {
+  const eventId = Number(req.params.eventId);
+  const division = parseDivision((req.body as { division?: Division }).division);
+  if (!Number.isFinite(eventId) || !division) {
+    res.status(400).json({ error: "Evento o división inválidos." });
+    return;
+  }
+  const event = await prisma.tournamentEvent.findUnique({
+    where: { id: eventId },
+    include: { dates: true }
+  });
+  if (!event) {
+    res.status(404).json({ error: "Evento no encontrado." });
+    return;
+  }
+  if (event.dates.some((date) => date.division === division)) {
+    res.status(409).json({ error: "Ese torneo ya existe en la fecha." });
+    return;
+  }
+  await prisma.tournamentDate.create({
+    data: { eventId, division, status: "OPEN" }
+  });
+  const updated = await prisma.tournamentEvent.findUniqueOrThrow({
+    where: { id: eventId },
+    include: eventIncludeDates
+  });
+  res.status(201).json(serializeEvent(updated));
+});
+
+app.post("/dates", requireAdmin, async (req, res) => {
+  const payload = req.body as { name?: string; eventDate?: string; divisions?: Division[] };
+  const divisions = parseDivisions(payload.divisions);
+  req.body = {
+    name: payload.name,
+    eventDate: payload.eventDate,
+    divisions: divisions.length > 0 ? divisions : ["MEN"]
+  };
+  const name = payload.name?.trim();
+  const eventDate = payload.eventDate ? parseDateOnly(payload.eventDate) : null;
+  if (!name || !eventDate) {
+    res.status(400).json({ error: "El nombre y la fecha del día son obligatorios." });
+    return;
+  }
+  const targetDivisions = divisions.length > 0 ? divisions : (["MEN"] as Division[]);
+  const created = await prisma.$transaction(async (tx) => {
+    const event = await tx.tournamentEvent.create({ data: { name, eventDate } });
+    for (const division of targetDivisions) {
+      await tx.tournamentDate.create({ data: { eventId: event.id, division, status: "OPEN" } });
+    }
+    return tx.tournamentEvent.findUniqueOrThrow({
+      where: { id: event.id },
+      include: eventIncludeDates
+    });
+  });
+  const firstDate = created.dates[0];
+  res.status(201).json(firstDate ? serializeDate(firstDate) : serializeEvent(created));
 });
 
 app.delete("/dates/:id", requireAdmin, async (req, res) => {
@@ -465,8 +652,11 @@ app.delete("/dates/:id", requireAdmin, async (req, res) => {
   await prisma.$transaction(async (tx) => {
     await tx.rankingPointEntry.deleteMany({ where: { dateId } });
     await tx.partnerHistory.deleteMany({ where: { dateId } });
-    // El resto (sorteos, zonas, cuadro, inscripciones, seeds) cae por cascade.
     await tx.tournamentDate.delete({ where: { id: dateId } });
+    const remaining = await tx.tournamentDate.count({ where: { eventId: date.eventId } });
+    if (remaining === 0) {
+      await tx.tournamentEvent.delete({ where: { id: date.eventId } });
+    }
   });
 
   res.status(204).send();
@@ -490,9 +680,19 @@ app.post("/dates/:id/registrations", requireAdmin, async (req, res) => {
 app.put("/dates/:id/registrations", requireAdmin, async (req, res) => {
   try {
     const dateId = Number(req.params.id);
+    const dateRow = await loadDateWithEvent(dateId);
+    if (!dateRow) {
+      res.status(404).json({ error: "Fecha no encontrada." });
+      return;
+    }
     await assertDateEditable(dateId);
     const body = req.body as { playerIds: number[] };
     const uniqueIds = Array.from(new Set(body.playerIds));
+    const mismatch = await assertPlayersMatchDivision(uniqueIds, dateRow.division);
+    if (mismatch) {
+      res.status(400).json({ error: mismatch });
+      return;
+    }
 
     await prisma.$transaction([
       prisma.dateRegistration.deleteMany({ where: { dateId } }),
@@ -535,13 +735,18 @@ app.post("/dates/:id/seeds", requireAdmin, async (req, res) => {
 app.post("/dates/:id/seeds/auto", requireAdmin, async (req, res) => {
   try {
     const dateId = Number(req.params.id);
+    const dateRow = await loadDateWithEvent(dateId);
+    if (!dateRow) {
+      res.status(404).json({ error: "Fecha no encontrada." });
+      return;
+    }
     await assertDateEditable(dateId);
 
     const registrations = await prisma.dateRegistration.findMany({
       where: { dateId },
-      include: { player: { select: { id: true, nickname: true, active: true } } }
+      include: { player: { select: { id: true, nickname: true, active: true, division: true } } }
     });
-    const attendees = registrations.map((r) => r.player).filter((p) => p.active);
+    const attendees = registrations.map((r) => r.player).filter((p) => p.active && p.division === dateRow.division);
     if (attendees.length < 2 || attendees.length % 2 !== 0) {
       res.status(400).json({ error: "La cantidad de asistentes debe ser par y al menos 2." });
       return;
@@ -555,7 +760,7 @@ app.post("/dates/:id/seeds/auto", requireAdmin, async (req, res) => {
       return;
     }
 
-    const seasonStarted = await hasAnyRankingPoints();
+    const seasonStarted = await hasAnyRankingPoints(dateRow.division);
     let mode: "random" | "ranking" = "random";
     let seedIds: number[] = [];
 
@@ -564,7 +769,7 @@ app.post("/dates/:id/seeds/auto", requireAdmin, async (req, res) => {
       seedIds = shuffle(attendees.map((a) => a.id)).slice(0, n);
     } else {
       mode = "ranking";
-      const scores = await getRankingScores();
+      const scores = await getRankingScores(dateRow.division);
       const rankedAttendees = [...attendees].sort((a, b) => {
         const diff = (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0);
         if (diff !== 0) return diff;
@@ -572,6 +777,13 @@ app.post("/dates/:id/seeds/auto", requireAdmin, async (req, res) => {
       });
       seedIds = rankedAttendees.slice(0, n).map((p) => p.id);
     }
+
+    const divisionPlayerIds = (
+      await prisma.player.findMany({
+        where: { division: dateRow.division },
+        select: { id: true }
+      })
+    ).map((player) => player.id);
 
     await prisma.$transaction([
       prisma.dateSeed.deleteMany({ where: { dateId } }),
@@ -582,7 +794,7 @@ app.post("/dates/:id/seeds/auto", requireAdmin, async (req, res) => {
           rank: index + 1
         }))
       }),
-      prisma.blacklistedPlayer.deleteMany({}),
+      prisma.blacklistedPlayer.deleteMany({ where: { playerId: { in: divisionPlayerIds } } }),
       prisma.blacklistedPlayer.createMany({ data: seedIds.map((playerId) => ({ playerId })) })
     ]);
 
@@ -608,6 +820,11 @@ app.post("/dates/:id/seeds/auto", requireAdmin, async (req, res) => {
 app.post("/dates/:id/draw/generate", requireAdmin, async (req, res) => {
   try {
     const dateId = Number(req.params.id);
+    const dateRow = await loadDateWithEvent(dateId);
+    if (!dateRow) {
+      res.status(404).json({ error: "Fecha no encontrada." });
+      return;
+    }
     await assertDateEditable(dateId);
     const registrations = await prisma.dateRegistration.findMany({ where: { dateId } });
     const playerIds = registrations.map((r) => r.playerId);
@@ -615,7 +832,7 @@ app.post("/dates/:id/draw/generate", requireAdmin, async (req, res) => {
       res.status(400).json({ error: "La cantidad de asistentes debe ser par." });
       return;
     }
-    const { blacklist, history } = await getConstraints();
+    const { blacklist, history } = await getConstraints(dateRow.division);
     const { pairs, conflicts } = generatePairs(shuffle(playerIds), blacklist, history);
 
     const draw = await prisma.dateDraw.create({
@@ -637,9 +854,14 @@ app.post("/dates/:id/draw/generate", requireAdmin, async (req, res) => {
 app.put("/dates/:id/draw/manual-adjust", requireAdmin, async (req, res) => {
   try {
     const dateId = Number(req.params.id);
+    const dateRow = await loadDateWithEvent(dateId);
+    if (!dateRow) {
+      res.status(404).json({ error: "Fecha no encontrada." });
+      return;
+    }
     await assertDateEditable(dateId);
     const body = req.body as { pairs: Array<{ player1: number; player2: number }> };
-    const { blacklist, history } = await getConstraints();
+    const { blacklist, history } = await getConstraints(dateRow.division);
     const errors: string[] = [];
 
     body.pairs.forEach((pair) => {
@@ -687,6 +909,11 @@ app.put("/dates/:id/draw/manual-adjust", requireAdmin, async (req, res) => {
 app.post("/dates/:id/zones/generate", requireAdmin, async (req, res) => {
   try {
     const dateId = Number(req.params.id);
+    const dateRow = await loadDateWithEvent(dateId);
+    if (!dateRow) {
+      res.status(404).json({ error: "Fecha no encontrada." });
+      return;
+    }
     await assertDateEditable(dateId);
     const draw = await prisma.dateDraw.findFirst({
       where: { dateId },
@@ -705,7 +932,12 @@ app.post("/dates/:id/zones/generate", requireAdmin, async (req, res) => {
     const seedIds = new Set(seeds.map((s) => s.playerId));
     const seedRankByPlayer = new Map(seeds.map((s) => [s.playerId, s.rank]));
     const blacklistedIds = seedIds.size > 0 ? seedIds : new Set(
-      (await prisma.blacklistedPlayer.findMany({ select: { playerId: true } })).map((i) => i.playerId)
+      (
+        await prisma.blacklistedPlayer.findMany({
+          where: { player: { division: dateRow.division } },
+          select: { playerId: true }
+        })
+      ).map((i) => i.playerId)
     );
 
     type ZonePair = {
@@ -1051,6 +1283,11 @@ app.post("/dates/:id/close", requireAdmin, async (req, res) => {
   try {
     const dateId = Number(req.params.id);
     const date = await assertDateEditable(dateId);
+    const dateRow = await loadDateWithEvent(dateId);
+    if (!dateRow) {
+      res.status(404).json({ error: "Fecha no encontrada." });
+      return;
+    }
 
     const [draw, bracket] = await Promise.all([
       prisma.dateDraw.findFirst({
@@ -1079,10 +1316,12 @@ app.post("/dates/:id/close", requireAdmin, async (req, res) => {
     const assignments = computeStageAssignments(bracket, pairKey);
 
     const firstSeasonDate = await prisma.tournamentDate.findFirst({
-      orderBy: [{ eventDate: "asc" }, { id: "asc" }]
+      where: { division: dateRow.division },
+      orderBy: [{ event: { eventDate: "asc" } }, { id: "asc" }]
     });
     const isDoublePoints = firstSeasonDate?.id === dateId;
     const pointsMultiplier = isDoublePoints ? 2 : 1;
+    const eventLabel = dateRow.event.name;
 
     await prisma.$transaction(async (tx) => {
       await tx.rankingPointEntry.deleteMany({ where: { dateId, manual: false } });
@@ -1094,7 +1333,7 @@ app.post("/dates/:id/close", requireAdmin, async (req, res) => {
             playerId,
             dateId,
             points: STAGE_POINTS[stage] * pointsMultiplier,
-            reason: `Fecha ${dateId} - ${stage}${isDoublePoints ? " (x2 primera fecha)" : ""}`,
+            reason: `${eventLabel} - ${stage}${isDoublePoints ? " (x2 primera fecha)" : ""}`,
             manual: false
           }))
         });
@@ -1103,7 +1342,7 @@ app.post("/dates/:id/close", requireAdmin, async (req, res) => {
       await tx.partnerHistory.createMany({
         data: draw.pairs.map((pair) => {
           const [a, b] = normalizePair(pair.player1, pair.player2);
-          return { playerAId: a, playerBId: b, dateId };
+          return { playerAId: a, playerBId: b, dateId, division: dateRow.division };
         }),
         skipDuplicates: true
       });
@@ -1117,9 +1356,9 @@ app.post("/dates/:id/close", requireAdmin, async (req, res) => {
       });
     });
 
-    const updated = await prisma.tournamentDate.findUnique({ where: { id: dateId } });
+    const updated = await loadDateWithEvent(dateId);
     res.json({
-      date: updated,
+      date: updated ? serializeDate(updated) : null,
       editableUntil: updated ? editableUntil(updated) : null,
       doublePoints: isDoublePoints,
       assignments: Array.from(assignments.entries()).map(([playerId, stage]) => ({
@@ -1136,8 +1375,13 @@ app.post("/dates/:id/close", requireAdmin, async (req, res) => {
 
 app.get("/dates/:id/workspace", requireAdmin, async (req, res) => {
   const dateId = Number(req.params.id);
-  const [date, registrations, seeds, draw, zones, players, bracket, zonesComputed] = await Promise.all([
-    prisma.tournamentDate.findUnique({ where: { id: dateId } }),
+  const date = await loadDateWithEvent(dateId);
+  if (!date) {
+    res.status(404).json({ error: "Fecha no encontrada" });
+    return;
+  }
+
+  const [registrations, seeds, draw, zones, players, bracket, zonesComputed] = await Promise.all([
     prisma.dateRegistration.findMany({
       where: { dateId },
       include: { player: { select: { id: true, nickname: true } } }
@@ -1152,18 +1396,16 @@ app.get("/dates/:id/workspace", requireAdmin, async (req, res) => {
       include: { pairs: true }
     }),
     prisma.zone.findMany({ where: { dateId }, orderBy: { name: "asc" } }),
-    prisma.player.findMany({ select: { id: true, nickname: true } }),
+    prisma.player.findMany({
+      where: { division: date.division },
+      select: { id: true, nickname: true }
+    }),
     prisma.bracketMatch.findMany({
       where: { dateId },
       orderBy: [{ round: "asc" }, { position: "asc" }]
     }),
     buildZonesComputed(dateId)
   ]);
-
-  if (!date) {
-    res.status(404).json({ error: "Fecha no encontrada" });
-    return;
-  }
 
   const playersById = new Map(players.map((player) => [player.id, player.nickname]));
   const pairsWithNames =
@@ -1182,7 +1424,7 @@ app.get("/dates/:id/workspace", requireAdmin, async (req, res) => {
   }));
 
   res.json({
-    date,
+    date: serializeDate(date),
     locked: isDateLocked(date),
     editableUntil: editableUntil(date),
     registrations: registrations.map((item) => item.player),
@@ -1240,10 +1482,12 @@ app.post("/dates/:id/results", requireAdmin, async (req, res) => {
   }
 });
 
-app.get("/ranking", async (_req, res) => {
+app.get("/ranking", async (req, res) => {
+  const division = requireDivisionFromRequest(req, res);
+  if (!division) return;
   const players = await prisma.player.findMany({
     include: { pointsEntries: true },
-    where: { active: true }
+    where: { active: true, division }
   });
   const ranking = players
     .map((player) => ({
@@ -1287,19 +1531,28 @@ app.post("/ranking/manual-adjustments", requireAdmin, async (req, res) => {
   res.status(201).json(created);
 });
 
-app.get("/ranking/ledger", requireAdmin, async (_req, res) => {
+app.get("/ranking/ledger", requireAdmin, async (req, res) => {
+  const division = divisionFromRequest(req);
   const entries = await prisma.rankingPointEntry.findMany({
-    include: { player: { select: { id: true, nickname: true } } },
+    where: division ? { player: { division } } : undefined,
+    include: { player: { select: { id: true, nickname: true, division: true } } },
     orderBy: { createdAt: "desc" },
     take: 200
   });
   res.json(entries);
 });
 
-app.get("/public/overview", async (_req, res) => {
+app.get("/public/overview", async (req, res) => {
+  const division = requireDivisionFromRequest(req, res);
+  if (!division) return;
   const [ranking, dates] = await Promise.all([
-    prisma.player.findMany({ include: { pointsEntries: true }, where: { active: true } }),
-    prisma.tournamentDate.findMany({ orderBy: { eventDate: "desc" }, take: 3 })
+    prisma.player.findMany({ include: { pointsEntries: true }, where: { active: true, division } }),
+    prisma.tournamentDate.findMany({
+      where: { division },
+      include: dateIncludeEvent,
+      orderBy: [{ event: { eventDate: "desc" } }, { id: "desc" }],
+      take: 3
+    })
   ]);
 
   res.json({
@@ -1310,32 +1563,53 @@ app.get("/public/overview", async (_req, res) => {
         points: p.pointsEntries.reduce((sum, item) => sum + item.points, 0)
       }))
       .sort((a, b) => b.points - a.points),
-    dates
+    dates: dates.map(serializeDate)
   });
 });
 
-app.get("/public/dates", async (_req, res) => {
-  const dates = await prisma.tournamentDate.findMany({
-    orderBy: { eventDate: "desc" },
-    select: { id: true, name: true, eventDate: true, status: true, closedAt: true }
+app.get("/public/events", async (req, res) => {
+  const division = divisionFromRequest(req);
+  const events = await prisma.tournamentEvent.findMany({
+    where: division ? { dates: { some: { division } } } : undefined,
+    include: {
+      dates: {
+        where: division ? { division } : undefined,
+        include: dateIncludeEvent,
+        orderBy: [{ division: "asc" }]
+      }
+    },
+    orderBy: { eventDate: "desc" }
   });
-  res.json(dates);
+  res.json(events.map(serializeEvent));
+});
+
+app.get("/public/dates", async (req, res) => {
+  const division = divisionFromRequest(req);
+  const dates = await prisma.tournamentDate.findMany({
+    where: division ? { division } : undefined,
+    include: dateIncludeEvent,
+    orderBy: [{ event: { eventDate: "desc" } }, { id: "desc" }]
+  });
+  res.json(dates.map(serializeDate));
 });
 
 app.get("/public/dates/:id/bracket", async (req, res) => {
   const dateId = Number(req.params.id);
-  const [date, bracket, players] = await Promise.all([
-    prisma.tournamentDate.findUnique({ where: { id: dateId } }),
-    prisma.bracketMatch.findMany({
-      where: { dateId },
-      orderBy: [{ round: "asc" }, { position: "asc" }]
-    }),
-    prisma.player.findMany({ select: { id: true, nickname: true } })
-  ]);
+  const date = await loadDateWithEvent(dateId);
   if (!date) {
     res.status(404).json({ error: "Fecha no encontrada." });
     return;
   }
+  const [bracket, players] = await Promise.all([
+    prisma.bracketMatch.findMany({
+      where: { dateId },
+      orderBy: [{ round: "asc" }, { position: "asc" }]
+    }),
+    prisma.player.findMany({
+      where: { division: date.division },
+      select: { id: true, nickname: true }
+    })
+  ]);
   const playersById = new Map(players.map((player) => [player.id, player.nickname]));
   const withNames = bracket.map((match) => ({
     ...match,
@@ -1345,18 +1619,18 @@ app.get("/public/dates/:id/bracket", async (req, res) => {
     pairBKey: bracketPairKey(match.pairBPlayer1, match.pairBPlayer2)
   }));
 
-  res.json({ date, bracket: withNames });
+  res.json({ date: serializeDate(date), bracket: withNames });
 });
 
 app.get("/public/dates/:id/zones", async (req, res) => {
   const dateId = Number(req.params.id);
-  const date = await prisma.tournamentDate.findUnique({ where: { id: dateId } });
+  const date = await loadDateWithEvent(dateId);
   if (!date) {
     res.status(404).json({ error: "Fecha no encontrada." });
     return;
   }
   const zonesComputed = await buildZonesComputed(dateId);
-  res.json({ date, zones: zonesComputed });
+  res.json({ date: serializeDate(date), zones: zonesComputed });
 });
 
 app.listen(port, () => {

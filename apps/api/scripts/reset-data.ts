@@ -19,6 +19,7 @@ async function wipeTournamentData(): Promise<void> {
   await prisma.dateSeed.deleteMany({});
   await prisma.dateRegistration.deleteMany({});
   await prisma.tournamentDate.deleteMany({});
+  await prisma.tournamentEvent.deleteMany({});
   await prisma.rankingPointEntry.deleteMany({});
   await prisma.partnerHistory.deleteMany({ where: { dateId: { not: null } } });
   await prisma.blacklistedPlayer.deleteMany({});

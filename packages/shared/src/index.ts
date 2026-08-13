@@ -19,3 +19,12 @@ export type DrawValidation = {
   valid: boolean;
   reason?: string;
 };
+
+export type Division = "MEN" | "WOMEN";
+
+export const DIVISIONS: Division[] = ["MEN", "WOMEN"];
+
+export const DIVISION_LABELS: Record<Division, string> = {
+  MEN: "Hombres",
+  WOMEN: "Chicas"
+};

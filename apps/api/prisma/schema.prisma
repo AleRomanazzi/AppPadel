@@ -9,15 +9,23 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum Division {
+  MEN
+  WOMEN
+}
+
 model Player {
-  id             Int                @id @default(autoincrement())
-  nickname       String             @unique
-  active         Boolean            @default(true)
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
+  id             Int                 @id @default(autoincrement())
+  nickname       String
+  division       Division            @default(MEN)
+  active         Boolean             @default(true)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
   pointsEntries  RankingPointEntry[]
   registrations  DateRegistration[]
   blacklistEntry BlacklistedPlayer?
+
+  @@unique([division, nickname])
 }
 
 model BlacklistedPlayer {
@@ -29,27 +37,39 @@ model BlacklistedPlayer {
 
 model PartnerHistory {
   id        Int      @id @default(autoincrement())
+  division  Division
   playerAId Int
   playerBId Int
   dateId    Int?
   createdAt DateTime @default(now())
 
-  @@unique([playerAId, playerBId])
+  @@unique([division, playerAId, playerBId])
+}
+
+model TournamentEvent {
+  id        Int              @id @default(autoincrement())
+  name      String
+  eventDate DateTime
+  createdAt DateTime         @default(now())
+  dates     TournamentDate[]
 }
 
 model TournamentDate {
-  id            Int                @id @default(autoincrement())
-  name          String
-  eventDate     DateTime
-  status        DateStatus         @default(DRAFT)
-  closedAt      DateTime?
-  createdAt     DateTime           @default(now())
-  registrations DateRegistration[]
-  draws         DateDraw[]
-  zones         Zone[]
-  matches       ZoneMatch[]
-  seeds         DateSeed[]
+  id             Int                @id @default(autoincrement())
+  eventId        Int
+  division       Division
+  status         DateStatus         @default(DRAFT)
+  closedAt       DateTime?
+  createdAt      DateTime           @default(now())
+  event          TournamentEvent    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registrations  DateRegistration[]
+  draws          DateDraw[]
+  zones          Zone[]
+  matches        ZoneMatch[]
+  seeds          DateSeed[]
   bracketMatches BracketMatch[]
+
+  @@unique([eventId, division])
 }
 
 model DateRegistration {
@@ -94,11 +114,11 @@ model DateSeed {
 }
 
 model Zone {
-  id      Int @id @default(autoincrement())
-  dateId  Int
-  name    String
-  size    Int
-  date    TournamentDate @relation(fields: [dateId], references: [id], onDelete: Cascade)
+  id     Int @id @default(autoincrement())
+  dateId Int
+  name   String
+  size   Int
+  date   TournamentDate @relation(fields: [dateId], references: [id], onDelete: Cascade)
 }
 
 model ZoneMatch {
