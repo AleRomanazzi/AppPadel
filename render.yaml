@@ -1,0 +1,29 @@
+# Render — Web Service (API)
+# https://render.com/docs/blueprint-spec
+#
+# Si ya creaste el servicio a mano, alineá el dashboard con estos valores:
+#   Build:  npm install && npm run build -w @apppadel/shared && npm run build -w api
+#   Pre-Deploy (opcional): npm run prisma:deploy -w api
+#   Start:  npm run start -w api
+#
+# NO corras prisma migrate deploy en Start: Render reinicia/reintenta y compite
+# por el advisory lock de Postgres (error P1002 con Neon).
+
+services:
+  - type: web
+    name: apppadel-api
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build -w @apppadel/shared && npm run build -w api
+    preDeployCommand: npm run prisma:deploy -w api
+    startCommand: npm run start -w api
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
