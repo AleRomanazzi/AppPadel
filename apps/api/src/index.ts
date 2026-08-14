@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import { Prisma, type TournamentDate } from "@prisma/client";
+import { Prisma, type PairingMode, type PlayerTier, type TournamentDate } from "@prisma/client";
 import { STAGE_POINTS, type Division, type Stage } from "@apppadel/shared";
 import { prisma } from "./db.js";
 import {
@@ -15,7 +15,7 @@ import {
   serializeDate,
   serializeEvent
 } from "./division.js";
-import { generatePairs, normalizePair, pairKey, validatePair } from "./pairing.js";
+import { generatePairsWithTiers, normalizePair, pairKey, selectSeedPlayerIds, validatePairWithRules } from "./pairing.js";
 import { scoreDiffForPair, isValidSetScore } from "./score.js";
 import { zoneIndexBySeedRank } from "./seedPlacement.js";
 import { buildZoneSizes, qualifierCountForZoneSize } from "./zoneLayout.js";
@@ -130,6 +130,16 @@ const shuffle = <T,>(items: T[]): T[] => {
   return clone;
 };
 
+const parsePlayerTier = (raw: unknown): PlayerTier | null => {
+  if (raw === "ABUSO" || raw === "MORTAL") return raw;
+  return null;
+};
+
+const parsePairingMode = (raw: unknown): PairingMode | null => {
+  if (raw === "FECHA_LIBRE" || raw === "ABUSO_MORTAL") return raw;
+  return null;
+};
+
 const getRankingScores = async (division: Division): Promise<Map<number, number>> => {
   const players = await prisma.player.findMany({
     where: { active: true, division },
@@ -141,14 +151,6 @@ const getRankingScores = async (division: Division): Promise<Map<number, number>
       player.pointsEntries.reduce((sum, item) => sum + item.points, 0)
     ])
   );
-};
-
-const hasAnyRankingPoints = async (division: Division): Promise<boolean> => {
-  const entry = await prisma.rankingPointEntry.findFirst({
-    where: { player: { division } },
-    select: { id: true }
-  });
-  return Boolean(entry);
 };
 
 const loadDateWithEvent = async (dateId: number) =>
@@ -326,7 +328,7 @@ app.get("/players", requireAdmin, async (req, res) => {
 });
 
 app.post("/players", requireAdmin, async (req, res) => {
-  const payload = req.body as { nickname: string; division?: Division };
+  const payload = req.body as { nickname: string; division?: Division; tier?: PlayerTier };
   const division = parseDivision(payload.division) ?? divisionFromRequest(req);
   if (!division) {
     res.status(400).json({ error: "Parámetro division requerido (men o women)." });
@@ -337,8 +339,9 @@ app.post("/players", requireAdmin, async (req, res) => {
     res.status(400).json({ error: "El apodo es obligatorio." });
     return;
   }
+  const tier = parsePlayerTier(payload.tier) ?? "MORTAL";
   try {
-    const player = await prisma.player.create({ data: { nickname, division } });
+    const player = await prisma.player.create({ data: { nickname, division, tier } });
     res.status(201).json(player);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -351,9 +354,13 @@ app.post("/players", requireAdmin, async (req, res) => {
 
 app.put("/players/:id", requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
-  const payload = req.body as Partial<{ nickname: string; active: boolean }>;
+  const payload = req.body as Partial<{ nickname: string; active: boolean; tier: PlayerTier }>;
   if (payload.nickname !== undefined && !payload.nickname.trim()) {
     res.status(400).json({ error: "El apodo es obligatorio." });
+    return;
+  }
+  if (payload.tier !== undefined && !parsePlayerTier(payload.tier)) {
+    res.status(400).json({ error: "Tier inválido (ABUSO o MORTAL)." });
     return;
   }
   try {
@@ -361,7 +368,8 @@ app.put("/players/:id", requireAdmin, async (req, res) => {
       where: { id },
       data: {
         ...(payload.nickname !== undefined ? { nickname: payload.nickname.trim() } : {}),
-        ...(payload.active !== undefined ? { active: payload.active } : {})
+        ...(payload.active !== undefined ? { active: payload.active } : {}),
+        ...(payload.tier !== undefined ? { tier: parsePlayerTier(payload.tier)! } : {})
       }
     });
     res.json(player);
@@ -744,7 +752,7 @@ app.post("/dates/:id/seeds/auto", requireAdmin, async (req, res) => {
 
     const registrations = await prisma.dateRegistration.findMany({
       where: { dateId },
-      include: { player: { select: { id: true, nickname: true, active: true, division: true } } }
+      include: { player: { select: { id: true, nickname: true, active: true, division: true, tier: true } } }
     });
     const attendees = registrations.map((r) => r.player).filter((p) => p.active && p.division === dateRow.division);
     if (attendees.length < 2 || attendees.length % 2 !== 0) {
@@ -760,30 +768,14 @@ app.post("/dates/:id/seeds/auto", requireAdmin, async (req, res) => {
       return;
     }
 
-    const seasonStarted = await hasAnyRankingPoints(dateRow.division);
-    let mode: "random" | "ranking" = "random";
-    let seedIds: number[] = [];
-
-    if (!seasonStarted) {
-      mode = "random";
-      seedIds = shuffle(attendees.map((a) => a.id)).slice(0, n);
-    } else {
-      mode = "ranking";
-      const scores = await getRankingScores(dateRow.division);
-      const rankedAttendees = [...attendees].sort((a, b) => {
-        const diff = (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0);
-        if (diff !== 0) return diff;
-        return a.nickname.localeCompare(b.nickname);
-      });
-      seedIds = rankedAttendees.slice(0, n).map((p) => p.id);
-    }
-
-    const divisionPlayerIds = (
-      await prisma.player.findMany({
-        where: { division: dateRow.division },
-        select: { id: true }
-      })
-    ).map((player) => player.id);
+    const abusosPresent = attendees.filter((player) => player.tier === "ABUSO");
+    const seedIds = selectSeedPlayerIds(
+      shuffle(abusosPresent.length >= n ? abusosPresent : attendees).map((player) => ({
+        id: player.id,
+        tier: player.tier
+      })),
+      n
+    );
 
     await prisma.$transaction([
       prisma.dateSeed.deleteMany({ where: { dateId } }),
@@ -793,24 +785,52 @@ app.post("/dates/:id/seeds/auto", requireAdmin, async (req, res) => {
           playerId,
           rank: index + 1
         }))
-      }),
-      prisma.blacklistedPlayer.deleteMany({ where: { playerId: { in: divisionPlayerIds } } }),
-      prisma.blacklistedPlayer.createMany({ data: seedIds.map((playerId) => ({ playerId })) })
+      })
     ]);
 
     const playersById = new Map(attendees.map((p) => [p.id, p.nickname]));
+    const tierById = new Map(attendees.map((p) => [p.id, p.tier]));
     const zoneByRank = zoneIndexBySeedRank(n);
+    const abusoSeedCount = seedIds.filter((id) => tierById.get(id) === "ABUSO").length;
     res.status(201).json({
-      mode,
+      mode: "abuso",
+      pairingMode: dateRow.pairingMode,
       zoneCount: n,
       zoneSizes,
+      abusoSeedCount,
+      warning:
+        abusoSeedCount < n
+          ? `Solo ${abusoSeedCount} abuso(s) presente(s); ${n - abusoSeedCount} cabeza(s) no son abuso.`
+          : undefined,
       seeds: seedIds.map((playerId, index) => ({
         playerId,
         nickname: playersById.get(playerId) ?? `#${playerId}`,
+        tier: tierById.get(playerId) ?? "MORTAL",
         rank: index + 1,
         zoneName: `Zona ${String.fromCharCode(65 + zoneByRank[index])}`
       }))
     });
+  } catch (error) {
+    if (handleDateGuardError(error, res)) return;
+    throw error;
+  }
+});
+
+app.put("/dates/:id/pairing-mode", requireAdmin, async (req, res) => {
+  try {
+    const dateId = Number(req.params.id);
+    await assertDateEditable(dateId);
+    const pairingMode = parsePairingMode((req.body as { pairingMode?: unknown }).pairingMode);
+    if (!pairingMode) {
+      res.status(400).json({ error: "Modo inválido (FECHA_LIBRE o ABUSO_MORTAL)." });
+      return;
+    }
+    const date = await prisma.tournamentDate.update({
+      where: { id: dateId },
+      data: { pairingMode },
+      include: dateIncludeEvent
+    });
+    res.json(serializeDate(date));
   } catch (error) {
     if (handleDateGuardError(error, res)) return;
     throw error;
@@ -826,14 +846,24 @@ app.post("/dates/:id/draw/generate", requireAdmin, async (req, res) => {
       return;
     }
     await assertDateEditable(dateId);
-    const registrations = await prisma.dateRegistration.findMany({ where: { dateId } });
+    const registrations = await prisma.dateRegistration.findMany({
+      where: { dateId },
+      include: { player: { select: { id: true, tier: true } } }
+    });
     const playerIds = registrations.map((r) => r.playerId);
     if (playerIds.length % 2 !== 0) {
       res.status(400).json({ error: "La cantidad de asistentes debe ser par." });
       return;
     }
+    const tierById = new Map(registrations.map((r) => [r.player.id, r.player.tier]));
     const { blacklist, history } = await getConstraints(dateRow.division);
-    const { pairs, conflicts } = generatePairs(shuffle(playerIds), blacklist, history);
+    const { pairs, conflicts } = generatePairsWithTiers(
+      shuffle(playerIds),
+      tierById,
+      blacklist,
+      history,
+      dateRow.pairingMode
+    );
 
     const draw = await prisma.dateDraw.create({
       data: {
@@ -844,7 +874,7 @@ app.post("/dates/:id/draw/generate", requireAdmin, async (req, res) => {
       include: { pairs: true }
     });
 
-    res.status(201).json({ draw, conflicts });
+    res.status(201).json({ draw, conflicts, pairingMode: dateRow.pairingMode });
   } catch (error) {
     if (handleDateGuardError(error, res)) return;
     throw error;
@@ -862,10 +892,19 @@ app.put("/dates/:id/draw/manual-adjust", requireAdmin, async (req, res) => {
     await assertDateEditable(dateId);
     const body = req.body as { pairs: Array<{ player1: number; player2: number }> };
     const { blacklist, history } = await getConstraints(dateRow.division);
+    const tierRows = await prisma.player.findMany({
+      where: { id: { in: body.pairs.flatMap((pair) => [pair.player1, pair.player2]) } },
+      select: { id: true, tier: true }
+    });
+    const tierById = new Map(tierRows.map((player) => [player.id, player.tier]));
+    const forbidAbusoAbuso = dateRow.pairingMode === "ABUSO_MORTAL";
     const errors: string[] = [];
 
     body.pairs.forEach((pair) => {
-      const result = validatePair(pair.player1, pair.player2, blacklist, history);
+      const result = validatePairWithRules(pair.player1, pair.player2, blacklist, history, {
+        forbidAbusoAbuso,
+        tierById
+      });
       if (!result.valid) errors.push(`${pair.player1}-${pair.player2}: ${result.reason}`);
     });
 

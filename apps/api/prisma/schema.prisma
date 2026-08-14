@@ -16,10 +16,21 @@ enum Division {
   WOMEN
 }
 
+enum PlayerTier {
+  ABUSO
+  MORTAL
+}
+
+enum PairingMode {
+  FECHA_LIBRE
+  ABUSO_MORTAL
+}
+
 model Player {
   id             Int                 @id @default(autoincrement())
   nickname       String
   division       Division            @default(MEN)
+  tier           PlayerTier          @default(MORTAL)
   active         Boolean             @default(true)
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
@@ -60,6 +71,7 @@ model TournamentDate {
   id             Int                @id @default(autoincrement())
   eventId        Int
   division       Division
+  pairingMode    PairingMode        @default(ABUSO_MORTAL)
   status         DateStatus         @default(DRAFT)
   closedAt       DateTime?
   createdAt      DateTime           @default(now())

@@ -1,12 +1,19 @@
-import type { Division } from "@apppadel/shared";
+import type { Division, PairingMode, PlayerTier } from "@apppadel/shared";
 
-export type Player = { id: number; nickname: string; division?: Division; active?: boolean };
+export type Player = {
+  id: number;
+  nickname: string;
+  division?: Division;
+  tier?: PlayerTier;
+  active?: boolean;
+};
 export type Ranking = { playerId: number; nickname: string; points: number };
 export type HistoryResponse = { exists: boolean; message: string };
 export type TournamentDate = {
   id: number;
   eventId: number;
   division: Division;
+  pairingMode: PairingMode;
   name: string;
   eventDate: string;
   status: string;

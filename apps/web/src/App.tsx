@@ -5,6 +5,8 @@ import { ScoreInput, isValidSetScore } from "./components/ScoreInput";
 import { ADMIN_TOKEN_KEY, api, apiAdmin } from "./lib/api";
 import {
   DIVISION_LABELS,
+  PAIRING_MODE_LABELS,
+  PLAYER_TIER_LABELS,
   eventTracksLabel,
   findDateInEvents,
   formatDateSelectLabel,
@@ -13,7 +15,9 @@ import {
   readStoredDivision,
   storeDivision,
   withDivisionQuery,
-  type Division
+  type Division,
+  type PairingMode,
+  type PlayerTier
 } from "./lib/division";
 import type {
   BracketMatch,
@@ -92,8 +96,10 @@ function App() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [ranking, setRanking] = useState<Ranking[]>([]);
   const [nickname, setNickname] = useState("");
+  const [newPlayerTier, setNewPlayerTier] = useState<PlayerTier>("MORTAL");
   const [editingPlayerId, setEditingPlayerId] = useState<number | null>(null);
   const [editingNickname, setEditingNickname] = useState("");
+  const [editingPlayerTier, setEditingPlayerTier] = useState<PlayerTier>("MORTAL");
   const [formError, setFormError] = useState("");
 
   const [historyA, setHistoryA] = useState("");
@@ -110,6 +116,7 @@ function App() {
   const [attendeeIds, setAttendeeIds] = useState<number[]>([]);
   const [dateWorkspace, setDateWorkspace] = useState<DateWorkspace | null>(null);
   const [dateMessage, setDateMessage] = useState("");
+  const [pairingMode, setPairingMode] = useState<PairingMode>("ABUSO_MORTAL");
   const [seedModeMessage, setSeedModeMessage] = useState("");
   const [drawConflicts, setDrawConflicts] = useState<string[]>([]);
   const [manualPairs, setManualPairs] = useState<Array<{ player1: number; player2: number }>>([]);
@@ -195,6 +202,7 @@ function App() {
   const refreshWorkspace = async (dateId: number) => {
     const workspace = await apiAdmin<DateWorkspace>(adminToken!, `/dates/${dateId}/workspace`);
     setDateWorkspace(workspace);
+    setPairingMode(workspace.date.pairingMode ?? "ABUSO_MORTAL");
     setAttendeeIds(workspace.registrations.map((player) => player.id));
     setManualPairs(workspace.draw?.pairs.map((pair) => ({ player1: pair.player1, player2: pair.player2 })) ?? []);
     const nextZoneScores: Record<number, string> = {};
@@ -285,9 +293,10 @@ function App() {
     try {
       await apiAdmin(adminToken!, withDivisionQuery("/players", division), {
         method: "POST",
-        body: JSON.stringify({ nickname, division })
+        body: JSON.stringify({ nickname, division, tier: newPlayerTier })
       });
       setNickname("");
+      setNewPlayerTier("MORTAL");
       await loadAdminData();
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "No se pudo guardar");
@@ -299,10 +308,11 @@ function App() {
     try {
       await apiAdmin(adminToken!, `/players/${editingPlayerId}`, {
         method: "PUT",
-        body: JSON.stringify({ nickname: editingNickname.trim() })
+        body: JSON.stringify({ nickname: editingNickname.trim(), tier: editingPlayerTier })
       });
       setEditingPlayerId(null);
       setEditingNickname("");
+      setEditingPlayerTier("MORTAL");
       await loadAdminData();
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "No se pudo editar");
@@ -368,15 +378,21 @@ function App() {
   const prepareAndDraw = async () => {
     if (!selectedDateId) return;
     try {
+      await apiAdmin(adminToken!, `/dates/${selectedDateId}/pairing-mode`, {
+        method: "PUT",
+        body: JSON.stringify({ pairingMode })
+      });
       const seeds = await apiAdmin<{
-        mode: "random" | "ranking";
+        mode: "abuso";
+        pairingMode: PairingMode;
         zoneCount: number;
-        seeds: Array<{ nickname: string; rank: number; zoneName: string }>;
+        abusoSeedCount: number;
+        warning?: string;
+        seeds: Array<{ nickname: string; tier: PlayerTier; rank: number; zoneName: string }>;
       }>(adminToken!, `/dates/${selectedDateId}/seeds/auto`, { method: "POST" });
       setSeedModeMessage(
-        seeds.mode === "random"
-          ? `Primera fecha: ${seeds.zoneCount} cabezas al azar (ubicadas en extremos opuestos).`
-          : `Cabezas = top ${seeds.zoneCount} del ranking (ubicadas en extremos opuestos).`
+        seeds.warning ??
+          `Cabezas = ${seeds.abusoSeedCount} abuso(s) en ${seeds.zoneCount} zona(s) · modo ${PAIRING_MODE_LABELS[seeds.pairingMode]}.`
       );
       const draw = await apiAdmin<{ conflicts: string[] }>(adminToken!, `/dates/${selectedDateId}/draw/generate`, {
         method: "POST"
@@ -385,7 +401,7 @@ function App() {
       await refreshWorkspace(selectedDateId);
       await loadAdminData();
       setDateMessage(
-        `Parejas armadas. ${seeds.seeds.map((s) => `#${s.rank} ${s.nickname} → ${s.zoneName}`).join(" · ")}`
+        `Parejas armadas. ${seeds.seeds.map((s) => `#${s.rank} ${s.nickname} (${PLAYER_TIER_LABELS[s.tier]}) → ${s.zoneName}`).join(" · ")}`
       );
     } catch (error) {
       setDateMessage(error instanceof Error ? error.message : "No se pudieron armar las parejas");
@@ -774,10 +790,17 @@ function App() {
                 {adminSection === "jugadores" ? (
                   <section className="panel">
                     <h2>Jugadores · {DIVISION_LABELS[division]}</h2>
-                    <p className="panel-lead">Agregá apodos. Después los marcás en cada fecha.</p>
+                    <p className="panel-lead">Agregá apodos y marcá si es abuso o mortal.</p>
                     <div className="field">
                       <label htmlFor="nick">Apodo nuevo</label>
                       <input id="nick" value={nickname} onChange={(e) => setNickname(e.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label htmlFor="new-tier">Tipo</label>
+                      <select id="new-tier" value={newPlayerTier} onChange={(e) => setNewPlayerTier(e.target.value as PlayerTier)}>
+                        <option value="MORTAL">{PLAYER_TIER_LABELS.MORTAL}</option>
+                        <option value="ABUSO">{PLAYER_TIER_LABELS.ABUSO}</option>
+                      </select>
                     </div>
                     <button className="btn btn-primary" onClick={() => void createPlayer()}>
                       Agregar jugador
@@ -789,6 +812,13 @@ function App() {
                           {editingPlayerId === player.id ? (
                             <div style={{ display: "grid", gap: "0.4rem", width: "100%" }}>
                               <input value={editingNickname} onChange={(e) => setEditingNickname(e.target.value)} />
+                              <select
+                                value={editingPlayerTier}
+                                onChange={(e) => setEditingPlayerTier(e.target.value as PlayerTier)}
+                              >
+                                <option value="MORTAL">{PLAYER_TIER_LABELS.MORTAL}</option>
+                                <option value="ABUSO">{PLAYER_TIER_LABELS.ABUSO}</option>
+                              </select>
                               <div className="btn-row">
                                 <button className="btn btn-ok" onClick={() => void savePlayerEdit()}>
                                   Guardar
@@ -800,13 +830,19 @@ function App() {
                             </div>
                           ) : (
                             <>
-                              <span className={player.active === false ? "muted" : ""}>{player.nickname}</span>
+                              <span className={player.active === false ? "muted" : ""}>
+                                {player.nickname}
+                                <span className="muted" style={{ marginLeft: "0.35rem" }}>
+                                  · {PLAYER_TIER_LABELS[player.tier ?? "MORTAL"]}
+                                </span>
+                              </span>
                               <div className="btn-row">
                                 <button
                                   className="btn btn-soft"
                                   onClick={() => {
                                     setEditingPlayerId(player.id);
                                     setEditingNickname(player.nickname);
+                                    setEditingPlayerTier(player.tier ?? "MORTAL");
                                   }}
                                 >
                                   Editar
@@ -1194,6 +1230,9 @@ function App() {
                                 }}
                               />
                               {player.nickname}
+                              <span className="muted" style={{ marginLeft: "0.35rem" }}>
+                                · {PLAYER_TIER_LABELS[player.tier ?? "MORTAL"]}
+                              </span>
                             </label>
                           ))}
                         </div>
@@ -1211,8 +1250,21 @@ function App() {
                         <div>
                           <h3>Armar parejas</h3>
                           <p className="muted">
-                            Un botón prepara las cabezas y sortea respetando historial y restricciones.
+                            Elegí el modo de armado. Los abusos son cabeza de zona y no pueden jugar juntos (salvo en
+                            fecha libre).
                           </p>
+                          <div className="field" style={{ maxWidth: "20rem" }}>
+                            <label htmlFor="pairing-mode">Modo de parejas</label>
+                            <select
+                              id="pairing-mode"
+                              value={pairingMode}
+                              disabled={dateLocked}
+                              onChange={(e) => setPairingMode(e.target.value as PairingMode)}
+                            >
+                              <option value="ABUSO_MORTAL">{PAIRING_MODE_LABELS.ABUSO_MORTAL}</option>
+                              <option value="FECHA_LIBRE">{PAIRING_MODE_LABELS.FECHA_LIBRE}</option>
+                            </select>
+                          </div>
                           <button className="btn btn-ok" disabled={dateLocked} onClick={() => void prepareAndDraw()}>
                             Preparar cabezas y sortear
                           </button>

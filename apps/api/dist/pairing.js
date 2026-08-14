@@ -13,7 +13,13 @@ export const validatePair = (a, b, blacklist, history) => {
     }
     return { valid: true };
 };
-export const generatePairs = (players, blacklist, history) => {
+export const validatePairWithRules = (a, b, blacklist, history, options) => {
+    if (options?.forbidAbusoAbuso && options.tierById?.get(a) === "ABUSO" && options.tierById?.get(b) === "ABUSO") {
+        return { valid: false, reason: "Dos abusos no pueden jugar juntos." };
+    }
+    return validatePair(a, b, blacklist, history);
+};
+const generatePairsWithPredicate = (players, canPair) => {
     const used = new Set();
     const pairs = [];
     const conflicts = [];
@@ -26,7 +32,7 @@ export const generatePairs = (players, blacklist, history) => {
             const p2 = players[j];
             if (used.has(p2))
                 continue;
-            if (validatePair(p1, p2, blacklist, history).valid) {
+            if (canPair(p1, p2)) {
                 chosen = p2;
                 break;
             }
@@ -40,4 +46,59 @@ export const generatePairs = (players, blacklist, history) => {
         pairs.push(normalizePair(p1, chosen));
     }
     return { pairs, conflicts };
+};
+export const generatePairs = (players, blacklist, history) => generatePairsWithPredicate(players, (a, b) => validatePair(a, b, blacklist, history).valid);
+export const selectSeedPlayerIds = (attendees, seedCount) => {
+    const abusos = attendees.filter((player) => player.tier === "ABUSO");
+    const mortales = attendees.filter((player) => player.tier !== "ABUSO");
+    if (abusos.length >= seedCount) {
+        return abusos.slice(0, seedCount).map((player) => player.id);
+    }
+    const seedIds = abusos.map((player) => player.id);
+    for (const mortal of mortales) {
+        if (seedIds.length >= seedCount)
+            break;
+        seedIds.push(mortal.id);
+    }
+    return seedIds.slice(0, seedCount);
+};
+export const generatePairsWithTiers = (players, tierById, blacklist, history, mode) => {
+    if (mode === "FECHA_LIBRE") {
+        return generatePairs(players, blacklist, history);
+    }
+    const canPair = (a, b) => validatePairWithRules(a, b, blacklist, history, { forbidAbusoAbuso: true, tierById }).valid;
+    const abusos = players.filter((id) => tierById.get(id) === "ABUSO");
+    const mortales = players.filter((id) => tierById.get(id) !== "ABUSO");
+    const used = new Set();
+    const pairs = [];
+    const conflicts = [];
+    for (const abuso of abusos) {
+        if (used.has(abuso))
+            continue;
+        let matched = false;
+        for (const mortal of mortales) {
+            if (used.has(mortal))
+                continue;
+            if (!canPair(abuso, mortal))
+                continue;
+            used.add(abuso);
+            used.add(mortal);
+            pairs.push(normalizePair(abuso, mortal));
+            matched = true;
+            break;
+        }
+        if (!matched) {
+            conflicts.push(`No se encontró mortal disponible para abuso ${abuso}`);
+        }
+    }
+    const remaining = players.filter((id) => !used.has(id));
+    const rest = generatePairsWithPredicate(remaining, (a, b) => {
+        if (tierById.get(a) === "ABUSO" && tierById.get(b) === "ABUSO")
+            return false;
+        return validatePair(a, b, blacklist, history).valid;
+    });
+    return {
+        pairs: [...pairs, ...rest.pairs],
+        conflicts: [...conflicts, ...rest.conflicts]
+    };
 };

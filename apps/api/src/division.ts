@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import type { Division, Prisma, TournamentDate, TournamentEvent } from "@prisma/client";
+import type { Division, PairingMode, Prisma, TournamentDate, TournamentEvent } from "@prisma/client";
 
 const DIVISION_ALIASES: Record<string, Division> = {
   MEN: "MEN",
@@ -57,6 +57,7 @@ export type SerializedDate = {
   id: number;
   eventId: number;
   division: Division;
+  pairingMode: PairingMode;
   name: string;
   eventDate: string;
   status: string;
@@ -68,6 +69,7 @@ export function serializeDate(date: TournamentDate & { event: TournamentEvent })
     id: date.id,
     eventId: date.eventId,
     division: date.division,
+    pairingMode: date.pairingMode,
     name: date.event.name,
     eventDate: date.event.eventDate.toISOString(),
     status: date.status,

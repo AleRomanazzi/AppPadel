@@ -1,9 +1,9 @@
-import type { Division } from "@apppadel/shared";
-import { DIVISION_LABELS } from "@apppadel/shared";
+import type { Division, PairingMode, PlayerTier } from "@apppadel/shared";
+import { DIVISION_LABELS, PAIRING_MODE_LABELS, PLAYER_TIER_LABELS } from "@apppadel/shared";
 import type { TournamentDate, TournamentEvent } from "./types";
 
-export type { Division };
-export { DIVISION_LABELS };
+export type { Division, PairingMode, PlayerTier };
+export { DIVISION_LABELS, PAIRING_MODE_LABELS, PLAYER_TIER_LABELS };
 
 export const DIVISION_STORAGE_KEY = "apppadel_division";
 
